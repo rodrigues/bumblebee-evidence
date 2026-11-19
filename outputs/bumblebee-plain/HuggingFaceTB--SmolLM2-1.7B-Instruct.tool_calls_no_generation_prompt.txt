@@ -1,0 +1,8 @@
+<|im_start|>system
+You are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>
+<|im_start|>user
+What time is it?<|im_end|>
+<|im_start|>assistant
+<|im_end|>
+<|im_start|>tool
+09:30<|im_end|>

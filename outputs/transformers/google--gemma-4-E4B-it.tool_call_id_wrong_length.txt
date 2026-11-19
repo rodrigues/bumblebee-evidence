@@ -1,0 +1,6 @@
+<bos><|turn>system
+<|tool>declaration:get_time{description:<|"|>Get the current time.<|"|>,parameters:{type:<|"|>OBJECT<|"|>}}<tool|><turn|>
+<|turn>user
+Time?<turn|>
+<|turn>model
+<|tool_call>call:get_time{}<tool_call|><|tool_response>response:get_time{value:<|"|>11:00<|"|>}<tool_response|>

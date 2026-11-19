@@ -1,0 +1,7 @@
+<|user|>
+Time twice?<|end|>
+<|assistant|>
+<|end|>
+<|assistant|>
+10:00 and 10:01.<|end|>
+<|endoftext|>

@@ -1,0 +1,5 @@
+<|system|>
+Be careful. /think<|end|>
+<|user|>
+Capital of Brazil?<|end|>
+<|assistant|>

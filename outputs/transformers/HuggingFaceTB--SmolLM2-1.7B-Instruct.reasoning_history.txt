@@ -1,0 +1,9 @@
+<|im_start|>system
+You are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>
+<|im_start|>user
+Is 91 prime?<|im_end|>
+<|im_start|>assistant
+No, 91 is 7 times 13.<|im_end|>
+<|im_start|>user
+And 97?<|im_end|>
+<|im_start|>assistant

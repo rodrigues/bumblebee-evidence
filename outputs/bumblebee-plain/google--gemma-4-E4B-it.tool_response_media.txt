@@ -1,0 +1,9 @@
+<bos><|turn>system
+<|tool>declaration:get_time{description:<|"|>Get the current time.<|"|>,parameters:{type:<|"|>OBJECT<|"|>}}<tool|><turn|>
+<|turn>user
+Show me.<turn|>
+<|turn>model
+<|tool_call>call:get_time{}<tool_call|><|tool_response>response:get_time{value:<|"|>A clock<|"|>}<tool_response|><|audio|><|video|><turn|>
+<|turn>user
+<|video|>And this?<turn|>
+<|turn>model

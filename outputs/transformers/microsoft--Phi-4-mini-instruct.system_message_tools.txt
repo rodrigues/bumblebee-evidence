@@ -1,0 +1,1 @@
+<|system|>You can call tools.<|tool|>[{"name": "get_time", "description": "Get the current time.", "parameters": {}}]<|/tool|><|end|><|user|>Time?<|end|><|assistant|>

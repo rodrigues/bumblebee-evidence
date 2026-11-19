@@ -1,0 +1,5 @@
+<bos><|turn>system
+<|tool>declaration:set_label{description:<|"|>Set a label.<|"|>,parameters:{properties:{label:{type:<|"|>['STRING', 'NULL']<|"|>}},required:[<|"|>label<|"|>],type:<|"|>OBJECT<|"|>}}<tool|><turn|>
+<|turn>user
+Clear the label.<turn|>
+<|turn>model

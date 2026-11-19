@@ -1,0 +1,5 @@
+<bos><|turn>system
+Answer in Portuguese. /no_think<turn|>
+<|turn>user
+Capital of Brazil?<turn|>
+<|turn>model

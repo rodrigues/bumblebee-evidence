@@ -1,0 +1,7 @@
+<bos><start_of_turn>user
+Is 91 prime?<end_of_turn>
+<start_of_turn>model
+No, 91 is 7 times 13.<end_of_turn>
+<start_of_turn>user
+And 97?<end_of_turn>
+<start_of_turn>model

@@ -1,0 +1,4 @@
+<|user|>
+What time is it?</s>
+<|assistant|>
+</s>

@@ -1,0 +1,1 @@
+<s>[AVAILABLE_TOOLS] [{"type": "function", "function": {"description": "Set a label.", "name": "set_label", "parameters": {"properties": {"label": {"type": ["string", "null"]}}, "required": ["label"], "type": "object"}}}][/AVAILABLE_TOOLS][INST] Clear the label.[/INST]

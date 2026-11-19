@@ -1,0 +1,1 @@
+<|user|>What time is it?<|end|><|assistant|><|end|><|tool|>09:30<|end|><|endoftext|>

@@ -1,0 +1,6 @@
+<bos><|turn>system
+<|tool>declaration:get_weather{description:<|"|>Get the current weather for a city.<|"|>,parameters:{properties:{city:{description:<|"|>City name<|"|>,type:<|"|>STRING<|"|>},days:{description:<|"|>Days ahead<|"|>,type:<|"|>INTEGER<|"|>},detailed:{type:<|"|>BOOLEAN<|"|>},extra:{properties:{additionalProperties:{type:<|"|>STRING<|"|>}},type:<|"|>OBJECT<|"|>},hours:{items:{type:<|"|>INTEGER<|"|>},type:<|"|>ARRAY<|"|>},location:{properties:{lat:{type:<|"|>NUMBER<|"|>},lon:{type:<|"|>NUMBER<|"|>}},required:[<|"|>lat<|"|>,<|"|>lon<|"|>],type:<|"|>OBJECT<|"|>},note:{nullable:true,type:<|"|>STRING<|"|>},stops:{items:{properties:{lat:{type:<|"|>NUMBER<|"|>},name:{type:<|"|>STRING<|"|>}},required:[<|"|>name<|"|>],type:<|"|>OBJECT<|"|>},type:<|"|>ARRAY<|"|>},threshold:{type:<|"|>NUMBER<|"|>},unit:{enum:[<|"|>celsius<|"|>,<|"|>fahrenheit<|"|>],type:<|"|>STRING<|"|>}},required:[<|"|>city<|"|>,<|"|>unit<|"|>],type:<|"|>OBJECT<|"|>},response:{description:<|"|>The forecast<|"|>,type:<|"|>OBJECT<|"|>}}<tool|><|tool>declaration:get_time{description:<|"|>Get the current time.<|"|>,parameters:{type:<|"|>OBJECT<|"|>}}<tool|><turn|>
+<|turn>user
+What time is it?<turn|>
+<|turn>model
+<|tool_call>call:get_time{}<tool_call|><|tool_response>response:get_time{value:<|"|>09:30<|"|>}<tool_response|>

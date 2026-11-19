@@ -1,0 +1,9 @@
+<bos><|turn>system
+You are a terse assistant.<turn|>
+<|turn>user
+What is the capital of Brazil?<turn|>
+<|turn>model
+Brasília.<turn|>
+<|turn>user
+And of France?<turn|>
+<|turn>model

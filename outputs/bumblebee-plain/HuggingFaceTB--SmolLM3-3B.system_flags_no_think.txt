@@ -1,0 +1,17 @@
+<|im_start|>system
+## Metadata
+
+Knowledge Cutoff Date: June 2025
+Today Date: 19 November 2026
+Reasoning Mode: /no_think
+
+## Custom Instructions
+
+Answer in Portuguese.
+
+<|im_start|>user
+Capital of Brazil?<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>

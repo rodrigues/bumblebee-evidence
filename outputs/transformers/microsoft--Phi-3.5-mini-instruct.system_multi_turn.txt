@@ -1,0 +1,9 @@
+<|system|>
+You are a terse assistant.<|end|>
+<|user|>
+What is the capital of Brazil?<|end|>
+<|assistant|>
+Brasília.<|end|>
+<|user|>
+And of France?<|end|>
+<|assistant|>

@@ -1,0 +1,3 @@
+<bos><|turn>user
+<|image|>Transcribe this staff to rokot-ABC.<turn|>
+<|turn>model

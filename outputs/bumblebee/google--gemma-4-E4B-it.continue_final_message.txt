@@ -1,0 +1,4 @@
+<bos><|turn>user
+Write a haiku about Elixir.<turn|>
+<|turn>model
+Processes awake,

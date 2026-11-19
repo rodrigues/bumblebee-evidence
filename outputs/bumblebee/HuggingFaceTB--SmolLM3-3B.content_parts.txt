@@ -1,0 +1,1 @@
+ERROR Otera.Error: 'list object' has no attribute 'replace' (line 23)

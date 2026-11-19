@@ -1,0 +1,6 @@
+<bos><|turn>system
+<|tool>declaration:get_weather{description:<|"|>Get the current weather for a city.<|"|>,parameters:{properties:{city:{description:<|"|>City name<|"|>,type:<|"|>STRING<|"|>},days:{description:<|"|>Days ahead<|"|>,type:<|"|>INTEGER<|"|>},detailed:{type:<|"|>BOOLEAN<|"|>},extra:{properties:{additionalProperties:{type:<|"|>STRING<|"|>}},type:<|"|>OBJECT<|"|>},hours:{items:{type:<|"|>INTEGER<|"|>},type:<|"|>ARRAY<|"|>},location:{properties:{lat:{type:<|"|>NUMBER<|"|>},lon:{type:<|"|>NUMBER<|"|>}},required:[<|"|>lat<|"|>,<|"|>lon<|"|>],type:<|"|>OBJECT<|"|>},note:{nullable:true,type:<|"|>STRING<|"|>},stops:{items:{properties:{lat:{type:<|"|>NUMBER<|"|>},name:{type:<|"|>STRING<|"|>}},required:[<|"|>name<|"|>],type:<|"|>OBJECT<|"|>},type:<|"|>ARRAY<|"|>},threshold:{type:<|"|>NUMBER<|"|>},unit:{enum:[<|"|>celsius<|"|>,<|"|>fahrenheit<|"|>],type:<|"|>STRING<|"|>}},required:[<|"|>city<|"|>,<|"|>unit<|"|>],type:<|"|>OBJECT<|"|>},response:{description:<|"|>The forecast<|"|>,type:<|"|>OBJECT<|"|>}}<tool|><turn|>
+<|turn>user
+Weather in Natal?<turn|>
+<|turn>model
+<|tool_call>call:get_weather{city:<|"|>Natal<|"|>,unit:<|"|>celsius<|"|>}<tool_call|><|tool_response>response:get_weather{hourly:[29.5,31],humid:true,sky:<|"|>clear<|"|>,temperature:30,wind:null}<tool_response|>

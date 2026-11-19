@@ -1,0 +1,16 @@
+<bos><start_of_turn>user
+Is 91 prime?<end_of_turn>
+<start_of_turn>model
+<think>
+91 = 7 * 13.
+</think>
+
+No.<end_of_turn>
+<start_of_turn>user
+And 97?<end_of_turn>
+<start_of_turn>model
+<|channel>thought
+Check divisors.<channel|>Yes, 97 is prime.<end_of_turn>
+<start_of_turn>user
+<tool_response>ignored</tool_response><end_of_turn>
+<start_of_turn>model

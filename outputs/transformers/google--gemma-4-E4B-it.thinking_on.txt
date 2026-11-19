@@ -1,0 +1,6 @@
+<bos><|turn>system
+<|think|>
+<turn|>
+<|turn>user
+Is 91 prime?<turn|>
+<|turn>model

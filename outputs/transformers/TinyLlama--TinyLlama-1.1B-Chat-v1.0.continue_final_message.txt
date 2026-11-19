@@ -1,0 +1,4 @@
+<|user|>
+Write a haiku about Elixir.</s>
+<|assistant|>
+Processes awake,

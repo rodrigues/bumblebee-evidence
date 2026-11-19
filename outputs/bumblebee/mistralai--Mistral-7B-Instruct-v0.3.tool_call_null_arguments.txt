@@ -1,0 +1,1 @@
+<s>[AVAILABLE_TOOLS] [{"type": "function", "function": {"name": "get_time", "description": "Get the current time.", "parameters": {"type": "object", "properties": {}}}}][/AVAILABLE_TOOLS][INST] Time?[/INST][TOOL_CALLS] [{"name": "get_time", "arguments": null, "id": "call00009"}]</s>

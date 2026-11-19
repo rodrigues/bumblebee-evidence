@@ -1,0 +1,5 @@
+<bos><|turn>user
+One.<turn|>
+<|turn>user
+Two.<turn|>
+<|turn>model

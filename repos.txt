@@ -1,0 +1,13 @@
+TinyLlama/TinyLlama-1.1B-Chat-v1.0
+HuggingFaceTB/SmolLM2-1.7B-Instruct
+mistralai/Mistral-7B-Instruct-v0.3
+HuggingFaceH4/zephyr-7b-beta
+unsloth/gemma-7b-it
+microsoft/Phi-3-mini-4k-instruct
+microsoft/Phi-3.5-mini-instruct
+microsoft/Phi-4-mini-instruct
+Qwen/Qwen3-0.6B
+Qwen/Qwen3-4B-Instruct-2507
+HuggingFaceTB/SmolLM3-3B
+google/gemma-4-E4B-it
+NousResearch/Hermes-2-Pro-Llama-3-8B

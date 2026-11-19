@@ -1,0 +1,7 @@
+<|system|>
+Use tools when they help.</s>
+<|user|>
+What's the weather in São Paulo?</s>
+<|assistant|>
+</s>
+<|assistant|>

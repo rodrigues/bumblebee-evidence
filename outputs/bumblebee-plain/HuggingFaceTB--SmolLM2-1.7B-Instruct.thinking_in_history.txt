@@ -1,0 +1,18 @@
+<|im_start|>system
+You are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>
+<|im_start|>user
+Is 91 prime?<|im_end|>
+<|im_start|>assistant
+<think>
+91 = 7 * 13.
+</think>
+
+No.<|im_end|>
+<|im_start|>user
+And 97?<|im_end|>
+<|im_start|>assistant
+<|channel>thought
+Check divisors.<channel|>Yes, 97 is prime.<|im_end|>
+<|im_start|>user
+<tool_response>ignored</tool_response><|im_end|>
+<|im_start|>assistant

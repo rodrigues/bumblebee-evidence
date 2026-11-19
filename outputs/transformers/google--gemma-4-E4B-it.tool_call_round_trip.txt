@@ -1,0 +1,6 @@
+<bos><|turn>system
+Use tools when they help.<|tool>declaration:get_weather{description:<|"|>Get the current weather for a city.<|"|>,parameters:{properties:{city:{description:<|"|>City name, e.g. <Lisbon> & "Porto"<|"|>,type:<|"|>STRING<|"|>},unit:{enum:[<|"|>celsius<|"|>,<|"|>fahrenheit<|"|>],type:<|"|>STRING<|"|>}},required:[<|"|>city<|"|>],type:<|"|>OBJECT<|"|>}}<tool|><turn|>
+<|turn>user
+What's the weather in São Paulo?<turn|>
+<|turn>model
+<|tool_call>call:get_weather{city:<|"|>São Paulo<|"|>,unit:<|"|>celsius<|"|>}<tool_call|><|tool_response>response:get_weather{value:<|"|>{"temperature": 24, "sky": "cloudy"}<|"|>}<tool_response|>

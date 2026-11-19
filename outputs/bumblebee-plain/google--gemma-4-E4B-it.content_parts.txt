@@ -1,0 +1,9 @@
+<bos><|turn>system
+Describe media briefly. <turn|>
+<|turn>user
+What is in these?<|image|><|audio|><|video|>Thanks.<turn|>
+<|turn>model
+A cat, a song and a clip.<turn|>
+<|turn>user
+More detail?<turn|>
+<|turn>model

@@ -1,0 +1,10 @@
+<bos><|turn>system
+<|think|>
+<turn|>
+<|turn>user
+Is 91 prime?<turn|>
+<|turn>model
+No, 91 is 7 times 13.<turn|>
+<|turn>user
+And 97?<turn|>
+<|turn>model

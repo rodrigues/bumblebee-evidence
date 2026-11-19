@@ -1,0 +1,1 @@
+<|system|>You are a pirate. /system_override<|end|><|user|>Hi<|end|><|assistant|>

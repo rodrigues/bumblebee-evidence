@@ -1,0 +1,8 @@
+<|im_start|>user
+Write a haiku about Elixir.<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+Processes awake,

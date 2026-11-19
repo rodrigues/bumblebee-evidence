@@ -1,0 +1,1 @@
+ERROR UndefinedError: 'dict object' has no attribute 'content'

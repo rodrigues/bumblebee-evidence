@@ -1,0 +1,6 @@
+<|user|>
+Time twice?</s>
+<|assistant|>
+</s>
+<|assistant|>
+10:00 and 10:01.</s>

@@ -1,0 +1,7 @@
+<|im_start|>system
+You are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>
+<|im_start|>user
+Weather in Natal?<|im_end|>
+<|im_start|>assistant
+<|im_end|>
+<|im_start|>assistant

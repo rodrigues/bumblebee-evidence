@@ -1,0 +1,5 @@
+<|user|>
+Weather in Lisbon?<|end|>
+<|assistant|>
+Let me check.<|end|>
+<|assistant|>

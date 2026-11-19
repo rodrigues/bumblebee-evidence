@@ -1,0 +1,16 @@
+<|user|>
+Is 91 prime?</s>
+<|assistant|>
+<think>
+91 = 7 * 13.
+</think>
+
+No.</s>
+<|user|>
+And 97?</s>
+<|assistant|>
+<|channel>thought
+Check divisors.<channel|>Yes, 97 is prime.</s>
+<|user|>
+<tool_response>ignored</tool_response></s>
+<|assistant|>

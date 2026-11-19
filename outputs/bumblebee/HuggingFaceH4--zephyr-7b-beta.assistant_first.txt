@@ -1,0 +1,5 @@
+<|assistant|>
+Hello! How can I help?</s>
+<|user|>
+Tell me a joke.</s>
+<|assistant|>

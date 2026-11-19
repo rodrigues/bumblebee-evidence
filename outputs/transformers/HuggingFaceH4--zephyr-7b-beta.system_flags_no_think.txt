@@ -1,0 +1,5 @@
+<|system|>
+Answer in Portuguese. /no_think</s>
+<|user|>
+Capital of Brazil?</s>
+<|assistant|>

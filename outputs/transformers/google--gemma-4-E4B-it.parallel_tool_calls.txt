@@ -1,0 +1,9 @@
+<bos><|turn>system
+Use tools when they help.<|tool>declaration:get_weather{description:<|"|>Get the current weather for a city.<|"|>,parameters:{properties:{city:{description:<|"|>City name<|"|>,type:<|"|>STRING<|"|>},days:{description:<|"|>Days ahead<|"|>,type:<|"|>INTEGER<|"|>},detailed:{type:<|"|>BOOLEAN<|"|>},extra:{properties:{additionalProperties:{type:<|"|>STRING<|"|>}},type:<|"|>OBJECT<|"|>},hours:{items:{type:<|"|>INTEGER<|"|>},type:<|"|>ARRAY<|"|>},location:{properties:{lat:{type:<|"|>NUMBER<|"|>},lon:{type:<|"|>NUMBER<|"|>}},required:[<|"|>lat<|"|>,<|"|>lon<|"|>],type:<|"|>OBJECT<|"|>},note:{nullable:true,type:<|"|>STRING<|"|>},stops:{items:{properties:{lat:{type:<|"|>NUMBER<|"|>},name:{type:<|"|>STRING<|"|>}},required:[<|"|>name<|"|>],type:<|"|>OBJECT<|"|>},type:<|"|>ARRAY<|"|>},threshold:{type:<|"|>NUMBER<|"|>},unit:{enum:[<|"|>celsius<|"|>,<|"|>fahrenheit<|"|>],type:<|"|>STRING<|"|>}},required:[<|"|>city<|"|>,<|"|>unit<|"|>],type:<|"|>OBJECT<|"|>},response:{description:<|"|>The forecast<|"|>,type:<|"|>OBJECT<|"|>}}<tool|><|tool>declaration:get_time{description:<|"|>Get the current time.<|"|>,parameters:{type:<|"|>OBJECT<|"|>}}<tool|><turn|>
+<|turn>user
+Weather in São Paulo and the time?<turn|>
+<|turn>model
+<|tool_call>call:get_weather{city:<|"|>São Paulo<|"|>,days:3,detailed:true,extra:{lang:<|"|>pt<|"|>},hours:[6,12,18],location:{lat:-23.55,lon:-46.63},note:null,stops:[{lat:-23.55,name:<|"|>Sé<|"|>}],threshold:24.5,unit:<|"|>celsius<|"|>}<tool_call|><|tool_call>call:get_time{}<tool_call|><|tool_response>response:get_weather{value:<|"|>{"temperature": 24, "sky": "cloudy"}<|"|>}<tool_response|><|tool_response>response:get_time{value:<|"|>14:05<|"|>}<tool_response|>It is 24 °C and cloudy, and the time is 14:05.<turn|>
+<|turn>user
+Thanks!<turn|>
+<|turn>model

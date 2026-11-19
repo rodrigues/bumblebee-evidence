@@ -1,0 +1,9 @@
+<|begin_of_text|><|im_start|>system
+You are a terse assistant.<|im_end|>
+<|im_start|>user
+What is the capital of Brazil?<|im_end|>
+<|im_start|>assistant
+Brasília.<|im_end|>
+<|im_start|>user
+And of France?<|im_end|>
+<|im_start|>assistant

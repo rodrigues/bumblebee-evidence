@@ -1,0 +1,3 @@
+<bos><start_of_turn>user
+[{'type': 'image'}, {'text': 'Transcribe this staff to rokot-ABC.', 'type': 'text'}]<end_of_turn>
+<start_of_turn>model

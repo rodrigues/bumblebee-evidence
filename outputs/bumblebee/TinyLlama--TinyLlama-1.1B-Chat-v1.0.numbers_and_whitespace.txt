@@ -1,0 +1,11 @@
+<|user|>
+  Leading and trailing spaces  
+
+</s>
+<|assistant|>
+
+Numbers: 1, 1.0, -0.5, 1e10
+</s>
+<|user|>
+	</s>
+<|assistant|>

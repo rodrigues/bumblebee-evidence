@@ -1,0 +1,1846 @@
+[
+  {
+    "name": "single_user",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is the capital of Brazil?"
+      }
+    ],
+    "options": {
+      "add_generation_prompt": true
+    }
+  },
+  {
+    "name": "system_multi_turn",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a terse assistant."
+      },
+      {
+        "role": "user",
+        "content": "What is the capital of Brazil?"
+      },
+      {
+        "role": "assistant",
+        "content": "Brasília."
+      },
+      {
+        "role": "user",
+        "content": "And of France?"
+      }
+    ],
+    "options": {
+      "add_generation_prompt": true
+    }
+  },
+  {
+    "name": "thinking_off",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Is 91 prime?"
+      }
+    ],
+    "options": {
+      "add_generation_prompt": true
+    },
+    "variables": {
+      "enable_thinking": false
+    }
+  },
+  {
+    "name": "thinking_on",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Is 91 prime?"
+      }
+    ],
+    "options": {
+      "add_generation_prompt": true
+    },
+    "variables": {
+      "enable_thinking": true
+    }
+  },
+  {
+    "name": "reasoning_history",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Is 91 prime?"
+      },
+      {
+        "role": "assistant",
+        "reasoning_content": "91 = 7 * 13.",
+        "content": "No, 91 is 7 times 13."
+      },
+      {
+        "role": "user",
+        "content": "And 97?"
+      }
+    ],
+    "options": {
+      "add_generation_prompt": true
+    },
+    "variables": {
+      "enable_thinking": true
+    }
+  },
+  {
+    "name": "tool_call_round_trip",
+    "messages": [
+      {
+        "role": "system",
+        "content": "Use tools when they help."
+      },
+      {
+        "role": "user",
+        "content": "What's the weather in São Paulo?"
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": {
+                "city": "São Paulo",
+                "unit": "celsius"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "name": "get_weather",
+        "content": "{\"temperature\": 24, \"sky\": \"cloudy\"}"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get the current weather for a city.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string",
+                "description": "City name, e.g. <Lisbon> & \"Porto\""
+              },
+              "unit": {
+                "type": "string",
+                "enum": [
+                  "celsius",
+                  "fahrenheit"
+                ]
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      }
+    ],
+    "options": {
+      "add_generation_prompt": true
+    }
+  },
+  {
+    "name": "image_prompt",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "image"
+          },
+          {
+            "type": "text",
+            "text": "Transcribe this staff to rokot-ABC."
+          }
+        ]
+      }
+    ],
+    "options": {
+      "add_generation_prompt": true
+    }
+  },
+  {
+    "name": "continue_final_message",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Write a haiku about Elixir."
+      },
+      {
+        "role": "assistant",
+        "content": "Processes awake,"
+      }
+    ],
+    "options": {
+      "continue_final_message": true
+    }
+  },
+  {
+    "name": "no_generation_prompt",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hi"
+      },
+      {
+        "role": "assistant",
+        "content": "Hello! 👋"
+      }
+    ],
+    "options": {}
+  },
+  {
+    "name": "parallel_tool_calls",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get the current weather for a city.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string",
+                "description": "City name"
+              },
+              "unit": {
+                "type": "string",
+                "enum": [
+                  "celsius",
+                  "fahrenheit"
+                ]
+              },
+              "days": {
+                "type": "integer",
+                "description": "Days ahead"
+              },
+              "threshold": {
+                "type": "number"
+              },
+              "detailed": {
+                "type": "boolean"
+              },
+              "hours": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              },
+              "stops": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "lat": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              },
+              "location": {
+                "type": "object",
+                "properties": {
+                  "lat": {
+                    "type": "number"
+                  },
+                  "lon": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "lat",
+                  "lon"
+                ]
+              },
+              "extra": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "city",
+              "unit"
+            ]
+          },
+          "return": {
+            "type": "object",
+            "description": "The forecast"
+          },
+          "response": {
+            "type": "object",
+            "description": "The forecast",
+            "properties": {
+              "temperature": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "get_time",
+          "description": "Get the current time.",
+          "parameters": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      }
+    ],
+    "options": {
+      "add_generation_prompt": true
+    },
+    "messages": [
+      {
+        "role": "system",
+        "content": "Use tools when they help."
+      },
+      {
+        "role": "user",
+        "content": "Weather in São Paulo and the time?"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call00001",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": {
+                "city": "São Paulo",
+                "unit": "celsius",
+                "days": 3,
+                "threshold": 24.5,
+                "detailed": true,
+                "hours": [
+                  6,
+                  12,
+                  18
+                ],
+                "stops": [
+                  {
+                    "name": "Sé",
+                    "lat": -23.55
+                  }
+                ],
+                "location": {
+                  "lat": -23.55,
+                  "lon": -46.63
+                },
+                "extra": {
+                  "lang": "pt"
+                },
+                "note": null
+              }
+            }
+          },
+          {
+            "id": "call00002",
+            "type": "function",
+            "function": {
+              "name": "get_time",
+              "arguments": {}
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call00001",
+        "name": "get_weather",
+        "content": "{\"temperature\": 24, \"sky\": \"cloudy\"}"
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call00002",
+        "name": "get_time",
+        "content": "14:05"
+      },
+      {
+        "role": "assistant",
+        "content": "It is 24 °C and cloudy, and the time is 14:05."
+      },
+      {
+        "role": "user",
+        "content": "Thanks!"
+      }
+    ]
+  },
+  {
+    "name": "tool_calls_no_generation_prompt",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get the current weather for a city.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string",
+                "description": "City name"
+              },
+              "unit": {
+                "type": "string",
+                "enum": [
+                  "celsius",
+                  "fahrenheit"
+                ]
+              },
+              "days": {
+                "type": "integer",
+                "description": "Days ahead"
+              },
+              "threshold": {
+                "type": "number"
+              },
+              "detailed": {
+                "type": "boolean"
+              },
+              "hours": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              },
+              "stops": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "lat": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              },
+              "location": {
+                "type": "object",
+                "properties": {
+                  "lat": {
+                    "type": "number"
+                  },
+                  "lon": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "lat",
+                  "lon"
+                ]
+              },
+              "extra": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "city",
+              "unit"
+            ]
+          },
+          "return": {
+            "type": "object",
+            "description": "The forecast"
+          },
+          "response": {
+            "type": "object",
+            "description": "The forecast",
+            "properties": {
+              "temperature": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "get_time",
+          "description": "Get the current time.",
+          "parameters": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      }
+    ],
+    "options": {},
+    "messages": [
+      {
+        "role": "user",
+        "content": "What time is it?"
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call00003",
+            "type": "function",
+            "function": {
+              "name": "get_time",
+              "arguments": {}
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call00003",
+        "name": "get_time",
+        "content": "09:30"
+      }
+    ]
+  },
+  {
+    "name": "tool_call_string_arguments",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get the current weather for a city.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string",
+                "description": "City name"
+              },
+              "unit": {
+                "type": "string",
+                "enum": [
+                  "celsius",
+                  "fahrenheit"
+                ]
+              },
+              "days": {
+                "type": "integer",
+                "description": "Days ahead"
+              },
+              "threshold": {
+                "type": "number"
+              },
+              "detailed": {
+                "type": "boolean"
+              },
+              "hours": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              },
+              "stops": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "lat": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              },
+              "location": {
+                "type": "object",
+                "properties": {
+                  "lat": {
+                    "type": "number"
+                  },
+                  "lon": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "lat",
+                  "lon"
+                ]
+              },
+              "extra": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "city",
+              "unit"
+            ]
+          },
+          "return": {
+            "type": "object",
+            "description": "The forecast"
+          },
+          "response": {
+            "type": "object",
+            "description": "The forecast",
+            "properties": {
+              "temperature": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
+    ],
+    "options": {
+      "add_generation_prompt": true
+    },
+    "messages": [
+      {
+        "role": "user",
+        "content": "Weather in Lisbon?"
+      },
+      {
+        "role": "assistant",
+        "content": "Let me check.",
+        "tool_calls": [
+          {
+            "id": "call00004",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"city\": \"Lisbon\", \"unit\": \"celsius\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call00004",
+        "name": "get_weather",
+        "content": "{\"temperature\": 19}"
+      }
+    ]
+  },
+  {
+    "name": "tool_call_flat",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get the current weather for a city.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string",
+                "description": "City name"
+              },
+              "unit": {
+                "type": "string",
+                "enum": [
+                  "celsius",
+                  "fahrenheit"
+                ]
+              },
+              "days": {
+                "type": "integer",
+                "description": "Days ahead"
+              },
+              "threshold": {
+                "type": "number"
+              },
+              "detailed": {
+                "type": "boolean"
+              },
+              "hours": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              },
+              "stops": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "lat": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              },
+              "location": {
+                "type": "object",
+                "properties": {
+                  "lat": {
+                    "type": "number"
+                  },
+                  "lon": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "lat",
+                  "lon"
+                ]
+              },
+              "extra": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "city",
+              "unit"
+            ]
+          },
+          "return": {
+            "type": "object",
+            "description": "The forecast"
+          },
+          "response": {
+            "type": "object",
+            "description": "The forecast",
+            "properties": {
+              "temperature": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
+    ],
+    "options": {
+      "add_generation_prompt": true
+    },
+    "messages": [
+      {
+        "role": "user",
+        "content": "Weather in Porto?"
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "name": "get_weather",
+            "arguments": {
+              "city": "Porto",
+              "unit": "celsius"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "{\"temperature\": 17}"
+      }
+    ]
+  },
+  {
+    "name": "tool_response_structured",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get the current weather for a city.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string",
+                "description": "City name"
+              },
+              "unit": {
+                "type": "string",
+                "enum": [
+                  "celsius",
+                  "fahrenheit"
+                ]
+              },
+              "days": {
+                "type": "integer",
+                "description": "Days ahead"
+              },
+              "threshold": {
+                "type": "number"
+              },
+              "detailed": {
+                "type": "boolean"
+              },
+              "hours": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              },
+              "stops": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "lat": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              },
+              "location": {
+                "type": "object",
+                "properties": {
+                  "lat": {
+                    "type": "number"
+                  },
+                  "lon": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "lat",
+                  "lon"
+                ]
+              },
+              "extra": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "city",
+              "unit"
+            ]
+          },
+          "return": {
+            "type": "object",
+            "description": "The forecast"
+          },
+          "response": {
+            "type": "object",
+            "description": "The forecast",
+            "properties": {
+              "temperature": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
+    ],
+    "options": {
+      "add_generation_prompt": true
+    },
+    "variables": {
+      "enable_thinking": true
+    },
+    "messages": [
+      {
+        "role": "user",
+        "content": "Weather in Recife?"
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call00005",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": {
+                "city": "Recife",
+                "unit": "celsius",
+                "detailed": false,
+                "note": null
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call00005",
+        "name": "get_weather",
+        "content": [
+          {
+            "type": "text",
+            "text": "29 °C, sunny"
+          },
+          {
+            "type": "image"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "tool_responses_field",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get the current weather for a city.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string",
+                "description": "City name"
+              },
+              "unit": {
+                "type": "string",
+                "enum": [
+                  "celsius",
+                  "fahrenheit"
+                ]
+              },
+              "days": {
+                "type": "integer",
+                "description": "Days ahead"
+              },
+              "threshold": {
+                "type": "number"
+              },
+              "detailed": {
+                "type": "boolean"
+              },
+              "hours": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              },
+              "stops": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "lat": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              },
+              "location": {
+                "type": "object",
+                "properties": {
+                  "lat": {
+                    "type": "number"
+                  },
+                  "lon": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "lat",
+                  "lon"
+                ]
+              },
+              "extra": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "city",
+              "unit"
+            ]
+          },
+          "return": {
+            "type": "object",
+            "description": "The forecast"
+          },
+          "response": {
+            "type": "object",
+            "description": "The forecast",
+            "properties": {
+              "temperature": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
+    ],
+    "options": {
+      "add_generation_prompt": true
+    },
+    "messages": [
+      {
+        "role": "user",
+        "content": "Weather in Natal?"
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call00006",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": {
+                "city": "Natal",
+                "unit": "celsius"
+              }
+            }
+          }
+        ],
+        "tool_responses": [
+          {
+            "name": "get_weather",
+            "response": {
+              "temperature": 30,
+              "sky": "clear",
+              "humid": true,
+              "wind": null,
+              "hourly": [
+                29.5,
+                31
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "tools_without_calls",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get the current weather for a city.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string",
+                "description": "City name"
+              },
+              "unit": {
+                "type": "string",
+                "enum": [
+                  "celsius",
+                  "fahrenheit"
+                ]
+              },
+              "days": {
+                "type": "integer",
+                "description": "Days ahead"
+              },
+              "threshold": {
+                "type": "number"
+              },
+              "detailed": {
+                "type": "boolean"
+              },
+              "hours": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              },
+              "stops": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "lat": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              },
+              "location": {
+                "type": "object",
+                "properties": {
+                  "lat": {
+                    "type": "number"
+                  },
+                  "lon": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "lat",
+                  "lon"
+                ]
+              },
+              "extra": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "city",
+              "unit"
+            ]
+          },
+          "return": {
+            "type": "object",
+            "description": "The forecast"
+          },
+          "response": {
+            "type": "object",
+            "description": "The forecast",
+            "properties": {
+              "temperature": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "get_time",
+          "description": "Get the current time.",
+          "parameters": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      }
+    ],
+    "options": {
+      "add_generation_prompt": true
+    },
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello there."
+      }
+    ]
+  },
+  {
+    "name": "content_parts",
+    "options": {
+      "add_generation_prompt": true
+    },
+    "messages": [
+      {
+        "role": "system",
+        "content": [
+          {
+            "type": "text",
+            "text": "Describe media briefly."
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "What is in these?"
+          },
+          {
+            "type": "image"
+          },
+          {
+            "type": "audio"
+          },
+          {
+            "type": "video"
+          },
+          {
+            "type": "text",
+            "text": "Thanks."
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "A cat, a song and a clip."
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": "More detail?"
+      }
+    ]
+  },
+  {
+    "name": "thinking_in_history",
+    "options": {
+      "add_generation_prompt": true
+    },
+    "variables": {
+      "enable_thinking": true,
+      "preserve_thinking": true
+    },
+    "messages": [
+      {
+        "role": "user",
+        "content": "Is 91 prime?"
+      },
+      {
+        "role": "assistant",
+        "content": "<think>\n91 = 7 * 13.\n</think>\n\nNo.",
+        "reasoning": "91 = 7 * 13."
+      },
+      {
+        "role": "user",
+        "content": "And 97?"
+      },
+      {
+        "role": "assistant",
+        "content": "<|channel>thought\nCheck divisors.<channel|>Yes, 97 is prime."
+      },
+      {
+        "role": "user",
+        "content": "<tool_response>ignored</tool_response>"
+      }
+    ]
+  },
+  {
+    "name": "system_flags_no_think",
+    "options": {
+      "add_generation_prompt": true
+    },
+    "messages": [
+      {
+        "role": "system",
+        "content": "Answer in Portuguese. /no_think"
+      },
+      {
+        "role": "user",
+        "content": "Capital of Brazil?"
+      }
+    ]
+  },
+  {
+    "name": "system_flags_think",
+    "options": {
+      "add_generation_prompt": true
+    },
+    "variables": {
+      "enable_thinking": false
+    },
+    "messages": [
+      {
+        "role": "system",
+        "content": "Be careful. /think"
+      },
+      {
+        "role": "user",
+        "content": "Capital of Brazil?"
+      }
+    ]
+  },
+  {
+    "name": "system_override",
+    "options": {
+      "add_generation_prompt": true
+    },
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a pirate. /system_override"
+      },
+      {
+        "role": "user",
+        "content": "Hi"
+      }
+    ]
+  },
+  {
+    "name": "xml_and_python_tools",
+    "options": {
+      "add_generation_prompt": true
+    },
+    "variables": {
+      "xml_tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "description": "Get the current weather for a city.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string",
+                  "description": "City name"
+                },
+                "unit": {
+                  "type": "string",
+                  "enum": [
+                    "celsius",
+                    "fahrenheit"
+                  ]
+                },
+                "days": {
+                  "type": "integer",
+                  "description": "Days ahead"
+                },
+                "threshold": {
+                  "type": "number"
+                },
+                "detailed": {
+                  "type": "boolean"
+                },
+                "hours": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                },
+                "stops": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "lat": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ]
+                  }
+                },
+                "location": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "extra": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "note": {
+                  "type": "string",
+                  "nullable": true
+                }
+              },
+              "required": [
+                "city",
+                "unit"
+              ]
+            },
+            "return": {
+              "type": "object",
+              "description": "The forecast"
+            },
+            "response": {
+              "type": "object",
+              "description": "The forecast",
+              "properties": {
+                "temperature": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "python_tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "get_time",
+            "description": "Get the current time.",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        }
+      ]
+    },
+    "messages": [
+      {
+        "role": "user",
+        "content": "Weather and time?"
+      }
+    ]
+  },
+  {
+    "name": "roles_not_alternating",
+    "options": {
+      "add_generation_prompt": true
+    },
+    "messages": [
+      {
+        "role": "user",
+        "content": "One."
+      },
+      {
+        "role": "user",
+        "content": "Two."
+      }
+    ]
+  },
+  {
+    "name": "assistant_first",
+    "options": {
+      "add_generation_prompt": true
+    },
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "Hello! How can I help?"
+      },
+      {
+        "role": "user",
+        "content": "Tell me a joke."
+      }
+    ]
+  },
+  {
+    "name": "numbers_and_whitespace",
+    "options": {
+      "add_generation_prompt": true
+    },
+    "messages": [
+      {
+        "role": "user",
+        "content": "  Leading and trailing spaces  \n\n"
+      },
+      {
+        "role": "assistant",
+        "content": "\nNumbers: 1, 1.0, -0.5, 1e10\n"
+      },
+      {
+        "role": "user",
+        "content": "\t"
+      }
+    ]
+  },
+  {
+    "name": "tool_schema_type_list",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "set_label",
+          "description": "Set a label.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "label"
+            ]
+          }
+        }
+      }
+    ],
+    "options": {
+      "add_generation_prompt": true
+    },
+    "messages": [
+      {
+        "role": "user",
+        "content": "Clear the label."
+      }
+    ]
+  },
+  {
+    "name": "consecutive_tool_messages",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_time",
+          "description": "Get the current time.",
+          "parameters": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      }
+    ],
+    "options": {},
+    "messages": [
+      {
+        "role": "user",
+        "content": "Time twice?"
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call00007",
+            "type": "function",
+            "function": {
+              "name": "get_time",
+              "arguments": "{}"
+            }
+          },
+          {
+            "id": "call00008",
+            "type": "function",
+            "function": {
+              "name": "get_time",
+              "arguments": {}
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call00007",
+        "name": "get_time",
+        "content": "10:00"
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call00008",
+        "name": "get_time",
+        "content": "10:01"
+      },
+      {
+        "role": "assistant",
+        "content": "10:00 and 10:01."
+      }
+    ]
+  },
+  {
+    "name": "tool_call_null_arguments",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_time",
+          "description": "Get the current time.",
+          "parameters": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      }
+    ],
+    "options": {
+      "add_generation_prompt": true
+    },
+    "messages": [
+      {
+        "role": "user",
+        "content": "Time?"
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call00009",
+            "type": "function",
+            "function": {
+              "name": "get_time",
+              "arguments": null
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "tool_call_id_wrong_length",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_time",
+          "description": "Get the current time.",
+          "parameters": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      }
+    ],
+    "options": {
+      "add_generation_prompt": true
+    },
+    "messages": [
+      {
+        "role": "user",
+        "content": "Time?"
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "short",
+            "type": "function",
+            "function": {
+              "name": "get_time",
+              "arguments": {}
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "short",
+        "name": "get_time",
+        "content": "11:00"
+      }
+    ]
+  },
+  {
+    "name": "tool_content_mapping",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_time",
+          "description": "Get the current time.",
+          "parameters": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      }
+    ],
+    "options": {
+      "add_generation_prompt": true
+    },
+    "messages": [
+      {
+        "role": "user",
+        "content": "Time?"
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call00010",
+            "type": "function",
+            "function": {
+              "name": "get_time",
+              "arguments": {}
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call00010",
+        "name": "get_time",
+        "content": {
+          "content": "12:00",
+          "zone": "UTC"
+        }
+      }
+    ]
+  },
+  {
+    "name": "tool_response_media",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_time",
+          "description": "Get the current time.",
+          "parameters": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      }
+    ],
+    "options": {
+      "add_generation_prompt": true
+    },
+    "messages": [
+      {
+        "role": "user",
+        "content": "Show me."
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call00011",
+            "type": "function",
+            "function": {
+              "name": "get_time",
+              "arguments": {}
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call00011",
+        "name": "get_time",
+        "content": [
+          {
+            "type": "text",
+            "text": "A clock"
+          },
+          {
+            "type": "audio"
+          },
+          {
+            "type": "video"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "video"
+          },
+          {
+            "type": "text",
+            "text": "And this?"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "system_message_tools",
+    "options": {
+      "add_generation_prompt": true
+    },
+    "messages": [
+      {
+        "role": "system",
+        "content": "You can call tools.",
+        "tools": "[{\"name\": \"get_time\", \"description\": \"Get the current time.\", \"parameters\": {}}]"
+      },
+      {
+        "role": "user",
+        "content": "Time?"
+      }
+    ]
+  }
+]

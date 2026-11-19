@@ -1,0 +1,18 @@
+<|begin_of_text|><|im_start|>system
+You are a function calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug into functions. Here are the available tools: <tools> {"type": "function", "function": {"name": "get_weather", "description": "get_weather(city: str, unit: str, days: int, threshold: float, detailed: bool, hours: list[Union[]], stops: list[Union[]], location: dict, extra: dict[str, str], note: str) -> dict - Get the current weather for a city.
+
+    Args:
+        city(str): City name        unit(str):         days(int): Days ahead        threshold(float):         detailed(bool):         hours(list[Union[]]):         stops(list[Union[]]):         location(dict):         extra(dict[str, str]):         note(str): 
+    Returns:
+        The forecast", "parameters": {"type": "object", "properties": {"city": {"type": "string", "description": "City name"}, "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}, "days": {"type": "integer", "description": "Days ahead"}, "threshold": {"type": "number"}, "detailed": {"type": "boolean"}, "hours": {"type": "array", "items": {"type": "integer"}}, "stops": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "lat": {"type": "number"}}, "required": ["name"]}}, "location": {"type": "object", "properties": {"lat": {"type": "number"}, "lon": {"type": "number"}}, "required": ["lat", "lon"]}, "extra": {"type": "object", "additionalProperties": {"type": "string"}}, "note": {"type": "string", "nullable": true}}, "required": ["city", "unit"]}} </tools>Use the following pydantic model json schema for each tool call you will make: {"properties": {"name": {"title": "Name", "type": "string"}, "arguments": {"title": "Arguments", "type": "object"}}, "required": ["name", "arguments"], "title": "FunctionCall", "type": "object"}}
+For each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:
+<tool_call>
+{"name": <function-name>, "arguments": <args-dict>}
+</tool_call><|im_end|>
+<|im_start|>user
+Weather in Natal?<|im_end|>
+<|im_start|>assistant
+<tool_call>
+{"name": "get_weather", "arguments": {"city": "Natal", "unit": "celsius"}}
+</tool_call><|im_end|>
+<|im_start|>assistant

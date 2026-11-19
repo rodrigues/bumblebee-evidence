@@ -1,0 +1,3 @@
+<s>[INST] What is the capital of Brazil?[/INST] Brasília.</s>[INST] You are a terse assistant.
+
+And of France?[/INST]

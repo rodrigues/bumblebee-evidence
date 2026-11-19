@@ -1,0 +1,4 @@
+<|user|>
+Hi</s>
+<|assistant|>
+Hello! 👋</s>

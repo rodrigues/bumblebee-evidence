@@ -1,0 +1,5 @@
+<|system|>
+You can call tools.<|end|>
+<|user|>
+Time?<|end|>
+<|assistant|>

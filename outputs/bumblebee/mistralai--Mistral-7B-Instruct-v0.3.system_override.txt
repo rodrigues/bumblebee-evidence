@@ -1,0 +1,3 @@
+<s>[INST] You are a pirate. /system_override
+
+Hi[/INST]

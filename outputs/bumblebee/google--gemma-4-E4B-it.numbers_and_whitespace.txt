@@ -1,0 +1,7 @@
+<bos><|turn>user
+Leading and trailing spaces<turn|>
+<|turn>model
+Numbers: 1, 1.0, -0.5, 1e10<turn|>
+<|turn>user
+<turn|>
+<|turn>model

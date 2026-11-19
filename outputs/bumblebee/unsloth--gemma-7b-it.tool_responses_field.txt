@@ -1,0 +1,5 @@
+<bos><start_of_turn>user
+Weather in Natal?<end_of_turn>
+<start_of_turn>model
+<end_of_turn>
+<start_of_turn>model

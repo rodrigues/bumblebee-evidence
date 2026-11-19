@@ -1,0 +1,5 @@
+<bos><|turn>system
+You are a pirate. /system_override<turn|>
+<|turn>user
+Hi<turn|>
+<|turn>model

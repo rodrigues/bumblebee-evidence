@@ -1,0 +1,5 @@
+<bos><|turn>system
+You can call tools.<turn|>
+<|turn>user
+Time?<turn|>
+<|turn>model

@@ -1,0 +1,18 @@
+<|im_start|>system
+## Metadata
+
+Knowledge Cutoff Date: June 2025
+Today Date: 19 November 2026
+Reasoning Mode: /think
+
+## Custom Instructions
+
+You are a terse assistant.
+
+<|im_start|>user
+What is the capital of Brazil?<|im_end|>
+<|im_start|>assistant
+Brasília.<|im_end|>
+<|im_start|>user
+And of France?<|im_end|>
+<|im_start|>assistant

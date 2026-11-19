@@ -1,0 +1,9 @@
+<|im_start|>system
+Use tools when they help.<|im_end|>
+<|im_start|>user
+What's the weather in São Paulo?<|im_end|>
+<|im_start|>assistant
+<|im_end|>
+<|im_start|>tool
+{"temperature": 24, "sky": "cloudy"}<|im_end|>
+<|im_start|>assistant

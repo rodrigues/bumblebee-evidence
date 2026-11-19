@@ -1,0 +1,12 @@
+<|im_start|>system
+You are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>
+<|im_start|>user
+Time twice?<|im_end|>
+<|im_start|>assistant
+<|im_end|>
+<|im_start|>tool
+10:00<|im_end|>
+<|im_start|>tool
+10:01<|im_end|>
+<|im_start|>assistant
+10:00 and 10:01.<|im_end|>

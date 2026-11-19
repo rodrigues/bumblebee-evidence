@@ -1,0 +1,14 @@
+<|im_start|>system
+## Metadata
+
+Knowledge Cutoff Date: June 2025
+Today Date: 19 November 2026
+Reasoning Mode: /think
+
+## Custom Instructions
+
+You can call tools.
+
+<|im_start|>user
+Time?<|im_end|>
+<|im_start|>assistant

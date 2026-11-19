@@ -1,0 +1,5 @@
+<bos><|turn>model
+Hello! How can I help?<turn|>
+<|turn>user
+Tell me a joke.<turn|>
+<|turn>model

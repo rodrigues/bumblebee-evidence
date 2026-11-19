@@ -1,0 +1,5 @@
+<|im_start|>system
+Answer in Portuguese. /no_think<|im_end|>
+<|im_start|>user
+Capital of Brazil?<|im_end|>
+<|im_start|>assistant

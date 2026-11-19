@@ -1,0 +1,1 @@
+ERROR Otera.Error: Conversation roles must alternate user/assistant/user/assistant/... (line 1)

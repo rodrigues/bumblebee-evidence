@@ -1,0 +1,1 @@
+<|user|>Weather in Natal?<|end|><|assistant|><|end|><|assistant|>
