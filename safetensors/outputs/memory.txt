@@ -1,0 +1,5 @@
+OTP 29, erts 17.1.1
+single: {error,einval}
+            79102696  peak memory footprint
+chunks: read 3221225472 bytes
+          6524835024  peak memory footprint

@@ -1,0 +1,158 @@
+diff --git a/lib/safetensors.ex b/lib/safetensors.ex
+index 201a7bb..578d0ee 100644
+--- a/lib/safetensors.ex
++++ b/lib/safetensors.ex
+@@ -172,7 +172,7 @@ defmodule Safetensors do
+               byte_size: byte_size
+             }
+           else
+-            {:ok, binary} = :file.pread(file, byte_offset, byte_size)
++            binary = Shared.pread!(file, byte_offset, byte_size)
+             Shared.build_tensor(binary, shape, type)
+           end
+ 
+diff --git a/lib/safetensors/file_tensor.ex b/lib/safetensors/file_tensor.ex
+index 439425f..ab357a3 100644
+--- a/lib/safetensors/file_tensor.ex
++++ b/lib/safetensors/file_tensor.ex
+@@ -10,7 +10,7 @@ defimpl Nx.LazyContainer, for: Safetensors.FileTensor do
+ 
+     load = fn ->
+       File.open!(lazy_tensor.path, [:read, :raw], fn file ->
+-        {:ok, binary} = :file.pread(file, lazy_tensor.byte_offset, lazy_tensor.byte_size)
++        binary = Safetensors.Shared.pread!(file, lazy_tensor.byte_offset, lazy_tensor.byte_size)
+         Safetensors.Shared.build_tensor(binary, lazy_tensor.shape, lazy_tensor.type)
+       end)
+     end
+diff --git a/lib/safetensors/shared.ex b/lib/safetensors/shared.ex
+index d984141..d050921 100644
+--- a/lib/safetensors/shared.ex
++++ b/lib/safetensors/shared.ex
+@@ -1,6 +1,71 @@
+ defmodule Safetensors.Shared do
+   @moduledoc false
+ 
++  @max_read_size 2_147_483_647
++
++  @doc """
++  Reads `byte_size` bytes from `file` at `byte_offset`.
++
++  Falls back to reading in chunks where a single read of that size
++  fails, which OTP versions without large read support do on macOS
++  for 2 GiB or more, and on Windows for 4 GiB or more.
++  """
++  @spec pread!(:file.io_device(), non_neg_integer(), non_neg_integer()) :: binary()
++  def pread!(file, byte_offset, byte_size) do
++    case :file.pread(file, byte_offset, byte_size) do
++      {:ok, binary} when byte_size(binary) == byte_size ->
++        binary
++
++      {:ok, binary} ->
++        read = byte_size(binary)
++        rest = read_chunks!(file, byte_offset, byte_size, read, @max_read_size)
++        IO.iodata_to_binary([binary | rest])
++
++      {:error, :einval} when byte_size > @max_read_size ->
++        pread_chunks!(file, byte_offset, byte_size, @max_read_size)
++
++      other ->
++        fail!(other, byte_offset, byte_size, 0)
++    end
++  end
++
++  @doc """
++  Reads `byte_size` bytes from `file` at `byte_offset`, in chunks of
++  at most `chunk_size` bytes, joined into one binary.
++  """
++  @spec pread_chunks!(:file.io_device(), non_neg_integer(), non_neg_integer(), pos_integer()) ::
++          binary()
++  def pread_chunks!(file, byte_offset, byte_size, chunk_size) do
++    file
++    |> read_chunks!(byte_offset, byte_size, 0, chunk_size)
++    |> IO.iodata_to_binary()
++  end
++
++  defp read_chunks!(_file, _byte_offset, byte_size, byte_size, _chunk_size), do: []
++
++  defp read_chunks!(file, byte_offset, byte_size, read, chunk_size) do
++    offset = byte_offset + read
++    size = min(chunk_size, byte_size - read)
++
++    case :file.pread(file, offset, size) do
++      {:ok, chunk} ->
++        read = read + byte_size(chunk)
++        [chunk | read_chunks!(file, byte_offset, byte_size, read, chunk_size)]
++
++      other ->
++        fail!(other, byte_offset, byte_size, read)
++    end
++  end
++
++  defp fail!(:eof, byte_offset, byte_size, read) do
++    raise "expected #{byte_size} bytes at offset #{byte_offset}, got #{read}"
++  end
++
++  defp fail!({:error, reason}, byte_offset, byte_size, _read) do
++    message = :file.format_error(reason)
++    raise "could not read #{byte_size} bytes at offset #{byte_offset}: #{message}"
++  end
++
+   @doc """
+   Builds Nx tensor from the given safetensors binary.
+   """
+@@ -11,8 +76,11 @@ defmodule Safetensors.Shared do
+     binary
+     |> new_byte_order(elem_size, :little)
+     |> IO.iodata_to_binary()
+-    |> Nx.from_binary(type)
++    |> Nx.from_binary(type, backend: Nx.BinaryBackend)
+     |> Nx.reshape(shape)
++    # Moved in its final shape, as a backend may not hold the flat tensor,
++    # such as EMLX with more than 2^31 - 1 elements in one dimension
++    |> Nx.backend_transfer(Nx.default_backend())
+   end
+ 
+   @doc """
+diff --git a/test/safetensors_test.exs b/test/safetensors_test.exs
+index 5486668..be42471 100644
+--- a/test/safetensors_test.exs
++++ b/test/safetensors_test.exs
+@@ -61,6 +61,38 @@ defmodule SafetensorsTest do
+     assert Nx.to_tensor(file_tensor) == Nx.tensor([[0, 0], [0, 0]], type: :s32)
+   end
+ 
++  @tag :tmp_dir
++  test "pread! reads at an offset", %{tmp_dir: tmp_dir} do
++    path = Path.join(tmp_dir, "data")
++    File.write!(path, "0123456789")
++
++    File.open!(path, [:read, :raw], fn file ->
++      assert Safetensors.Shared.pread!(file, 2, 7) == "2345678"
++    end)
++  end
++
++  @tag :tmp_dir
++  test "pread_chunks! reads in chunks", %{tmp_dir: tmp_dir} do
++    path = Path.join(tmp_dir, "data")
++    File.write!(path, "0123456789")
++
++    File.open!(path, [:read, :raw], fn file ->
++      assert Safetensors.Shared.pread_chunks!(file, 2, 7, 3) == "2345678"
++    end)
++  end
++
++  @tag :tmp_dir
++  test "pread! raises when the file is shorter than the read", %{tmp_dir: tmp_dir} do
++    path = Path.join(tmp_dir, "data")
++    File.write!(path, "0123456789")
++
++    File.open!(path, [:read, :raw], fn file ->
++      assert_raise RuntimeError, ~r/expected 20 bytes at offset 2, got 8/, fn ->
++        Safetensors.Shared.pread!(file, 2, 20)
++      end
++    end)
++  end
++
+   test "load" do
+     # source:
+     # https://github.com/huggingface/safetensors/blob/1a65a3fdebcf280ef0ca32934901d3e2ad3b2c65/bindings/python/tests/test_simple.py#L35-L40

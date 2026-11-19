@@ -1,0 +1,15 @@
+# mix profile.tprof --type time of Axon.trace_init for a 9-block Gemma 4, with the earlier version that kept previous results in the block map
+# Map.update/4 and Access.get/3 take 99.6% of 15.3 s in 22k calls; the heap grows with the captured graph, and garbage collection is billed to them
+
+Total                                                                  1213155 100.00 15332693   12.64
+Map.update/4                                                              1507  66.39 10179625 6754.89
+Access.get/3                                                             20642  33.17  5086472  246.41
+Enum.predicate_list/3                                                    47277   0.02     2610    0.06
+Enum."-reduce/3-lists^foldl/2-0-"/3                                      51051   0.02     2353    0.05
+Enum."-map/2-lists^map/1-1-"/2                                           31085   0.02     2356    0.08
+Nx.to_tensor/1                                                           26719   0.01      892    0.03
+Nx.Shape.shape_and_names_to_lower_ranked_list/4                          18306   0.01      955    0.05
+Nx.Defn.Kernel.keyword!/4                                                10347   0.01      857    0.08
+Nx.Defn.Expr.expr/4                                                       9890   0.01      968    0.10
+Nx.Defn.Expr.constant_expr/3                                              4137   0.01      994    0.24
+Nx.apply_vectorized/2                                                     6968   0.01      858    0.12

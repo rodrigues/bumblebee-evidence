@@ -1,0 +1,5 @@
+6 blocks: trace_init 35 ms
+9 blocks: trace_init 7 ms
+12 blocks: trace_init 7 ms
+24 blocks: trace_init 17 ms
+42 blocks: trace_init 37 ms
