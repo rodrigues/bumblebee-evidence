@@ -1,0 +1,1162 @@
+diff --git a/lib/bumblebee.ex b/lib/bumblebee.ex
+index 7d82beb..949fe5a 100644
+--- a/lib/bumblebee.ex
++++ b/lib/bumblebee.ex
+@@ -204,6 +204,9 @@ defmodule Bumblebee do
+     "Qwen3Model" => {Bumblebee.Text.Qwen3, :base},
+     "Qwen3ForCausalLM" => {Bumblebee.Text.Qwen3, :for_causal_language_modeling},
+     "Qwen3ForSequenceClassification" => {Bumblebee.Text.Qwen3, :for_sequence_classification},
++    "Qwen3_5TextModel" => {Bumblebee.Text.Qwen3_5, :base},
++    "Qwen3_5ForCausalLM" => {Bumblebee.Text.Qwen3_5, :for_causal_language_modeling},
++    "Qwen3_5ForConditionalGeneration" => {Bumblebee.Text.Qwen3_5, :for_causal_language_modeling},
+     "ResNetForImageClassification" => {Bumblebee.Vision.ResNet, :for_image_classification},
+     "ResNetModel" => {Bumblebee.Vision.ResNet, :base},
+     "RobertaForMaskedLM" => {Bumblebee.Text.Roberta, :for_masked_language_modeling},
+@@ -291,6 +294,8 @@ defmodule Bumblebee do
+     "phi" => :code_gen,
+     "phi3" => :llama,
+     "qwen3" => :qwen2,
++    "qwen3_5" => :qwen2,
++    "qwen3_5_text" => :qwen2,
+     "roberta" => :roberta,
+     "smollm3" => :smollm3,
+     "t5" => :t5,
+diff --git a/lib/bumblebee/text/generation_config.ex b/lib/bumblebee/text/generation_config.ex
+index d7a6a9a..281cb53 100644
+--- a/lib/bumblebee/text/generation_config.ex
++++ b/lib/bumblebee/text/generation_config.ex
+@@ -257,6 +257,7 @@ defmodule Bumblebee.Text.GenerationConfig do
+       data =
+         case data do
+           %{"model_type" => "blip", "text_config" => data} -> data
++          %{"model_type" => "qwen3_5", "text_config" => data} -> data
+           data -> data
+         end
+ 
+diff --git a/lib/bumblebee/text/qwen3_5.ex b/lib/bumblebee/text/qwen3_5.ex
+new file mode 100644
+index 0000000..7291bcd
+--- /dev/null
++++ b/lib/bumblebee/text/qwen3_5.ex
+@@ -0,0 +1,917 @@
++defmodule Bumblebee.Text.Qwen3_5 do
++  alias Bumblebee.Shared
++
++  options =
++    [
++      vocab_size: [
++        default: 248_320,
++        doc: """
++        the vocabulary size of the token embedding. This corresponds to the number of distinct
++        tokens that can be represented in model input and output
++        """
++      ],
++      max_positions: [
++        default: 262_144,
++        doc: """
++        the vocabulary size of the position embedding. This corresponds to the maximum sequence
++        length that this model can process. Typically this is set to a large value just in case,
++        such as 512, 1024 or 2048
++        """
++      ],
++      hidden_size: [
++        default: 1024,
++        doc: "the dimensionality of hidden layers"
++      ],
++      intermediate_size: [
++        default: 3584,
++        doc: "the dimensionality of intermediate layers"
++      ],
++      num_blocks: [
++        default: 24,
++        doc: "the number of blocks in the model"
++      ],
++      block_types: [
++        default: nil,
++        doc: """
++        the type of each block, either `:linear_attention` or `:full_attention`.
++        Defaults to `:full_attention` for every fourth block and `:linear_attention`
++        for the others
++        """
++      ],
++      num_attention_heads: [
++        default: 8,
++        doc: "the number of attention heads in the full attention blocks"
++      ],
++      num_key_value_heads: [
++        default: 2,
++        doc: "the number of key value heads in the full attention blocks"
++      ],
++      attention_head_size: [
++        default: 256,
++        doc:
++          "the size of the key, value, and query projection per head in the full attention blocks"
++      ],
++      linear_attention_num_key_heads: [
++        default: 16,
++        doc: "the number of query and key heads in the linear attention blocks"
++      ],
++      linear_attention_num_value_heads: [
++        default: 16,
++        doc: "the number of value heads in the linear attention blocks"
++      ],
++      linear_attention_key_head_size: [
++        default: 128,
++        doc: "the size of the query and key projection per head in the linear attention blocks"
++      ],
++      linear_attention_value_head_size: [
++        default: 128,
++        doc: "the size of the value projection per head in the linear attention blocks"
++      ],
++      linear_attention_conv_kernel_size: [
++        default: 4,
++        doc: "the size of the causal convolution kernel in the linear attention blocks"
++      ],
++      activation: [
++        default: :silu,
++        doc: "the activation function"
++      ],
++      rotary_embedding_base: [
++        default: 10_000_000,
++        doc: "base for computing rotary embedding frequency"
++      ],
++      rotary_embedding_percentage: [
++        default: 0.25,
++        doc: "percentage of each attention head to apply rotary embedding to"
++      ],
++      layer_norm_epsilon: [
++        default: 1.0e-6,
++        doc: "the epsilon used by RMS normalization layers"
++      ],
++      initializer_scale: [
++        default: 0.02,
++        doc:
++          "the standard deviation of the normal initializer used for initializing kernel parameters"
++      ],
++      tie_word_embeddings: [
++        default: true,
++        doc: "whether to tie input and output embedding weights"
++      ]
++    ] ++
++      Shared.common_options([:rotary_embedding_scaling_strategy]) ++
++      Shared.token_options(pad_token_id: 248_044)
++
++  @moduledoc """
++  Qwen3.5 model family, also used by Qwen3.6 and the dense Qwen3.8 models.
++
++  Most blocks use Gated DeltaNet linear attention, which keeps a
++  recurrent state of fixed size and a short convolution over recent
++  tokens, and every fourth block uses full attention with a gate on
++  its output.
++
++  Only the language model is supported. When loading a multimodal
++  checkpoint, the vision tower and the multi-token prediction weights
++  are ignored.
++
++  ## Architectures
++
++    * `:base` - plain Qwen3.5 without any head on top
++
++    * `:for_causal_language_modeling` - Qwen3.5 with a language modeling
++      head. The head returns logits for each token in the original
++      sequence
++
++  ## Inputs
++
++    * `"input_ids"` - `{batch_size, sequence_length}`
++
++      Indices of input sequence tokens in the vocabulary.
++
++    * `"attention_mask"` - `{batch_size, sequence_length}`
++
++      Mask indicating which tokens to attend to. This is used to ignore
++      padding tokens, which are added when processing a batch of sequences
++      with different length.
++
++    * `"position_ids"` - `{batch_size, sequence_length}`
++
++      Indices of positions of each input sequence tokens in the position
++      embeddings.
++
++    * `"input_embeddings"` - `{batch_size, sequence_length, hidden_size}`
++
++      Embedded representation of `"input_ids"`, which can be specified
++      for more control over how `"input_ids"` are embedded than the
++      model's internal embedding lookup. If `"input_embeddings"` are present,
++      then `"input_ids"` will be ignored.
++
++    * `"cache"`
++
++      A container with cached layer results used to speed up sequential
++      decoding (autoregression). With cache, certain hidden states are
++      taken from the cache, rather than recomputed on every decoding
++      pass. The cache should be treated as opaque and initialized with
++      `Bumblebee.Text.Generation.init_cache/4`.
++
++  ## Global layer options
++
++  #{Shared.global_layer_options_doc([:output_hidden_states, :output_attentions])}
++
++  ## Configuration
++
++  #{Shared.options_doc(options)}
++  """
++
++  defstruct [architecture: :base] ++ Shared.option_defaults(options)
++
++  @behaviour Bumblebee.ModelSpec
++  @behaviour Bumblebee.Configurable
++  @behaviour Bumblebee.Text.Generation
++
++  import Bumblebee.Utils.Model, only: [join: 2]
++  import Nx.Defn
++
++  alias Bumblebee.Layers
++
++  @impl true
++  def architectures(), do: [:base, :for_causal_language_modeling]
++
++  @impl true
++  def config(spec, opts) do
++    spec = Shared.put_config_attrs(spec, opts)
++
++    block_types =
++      spec.block_types ||
++        for index <- 0..(spec.num_blocks - 1) do
++          if rem(index + 1, 4) == 0, do: :full_attention, else: :linear_attention
++        end
++
++    if length(block_types) != spec.num_blocks do
++      raise ArgumentError,
++            "expected :block_types to have #{spec.num_blocks} entries, got: #{length(block_types)}"
++    end
++
++    %{spec | block_types: block_types}
++  end
++
++  @impl true
++  def input_template(_spec) do
++    %{
++      "input_ids" => Nx.template({1, 1}, :s64)
++    }
++  end
++
++  @impl true
++  def init_cache(spec, batch_size, max_length, _inputs) do
++    cache =
++      Layers.Decoder.init_cache(batch_size, max_length,
++        hidden_size: spec.hidden_size,
++        attention_head_size: spec.attention_head_size,
++        decoder_num_attention_heads: spec.num_attention_heads,
++        decoder_num_key_value_heads: spec.num_key_value_heads,
++        decoder_num_blocks: spec.num_blocks
++      )
++
++    # Linear attention blocks keep the convolution inputs of the last
++    # few tokens and the recurrent state, instead of keys and values
++    linear_attention = %{
++      conv_state:
++        Nx.broadcast(
++          0.0,
++          {batch_size, spec.linear_attention_conv_kernel_size - 1,
++           linear_attention_conv_size(spec)}
++        ),
++      recurrent_state:
++        Nx.broadcast(
++          0.0,
++          {batch_size, spec.linear_attention_num_value_heads, spec.linear_attention_key_head_size,
++           spec.linear_attention_value_head_size}
++        )
++    }
++
++    blocks =
++      cache.blocks
++      |> Tuple.to_list()
++      |> Enum.zip_with(spec.block_types, fn
++        block, :full_attention -> block
++        block, :linear_attention -> %{block | self_attention: linear_attention}
++      end)
++      |> List.to_tuple()
++
++    %{cache | blocks: blocks}
++  end
++
++  @impl true
++  def model(%__MODULE__{architecture: :base} = spec) do
++    inputs = inputs(spec)
++
++    inputs
++    |> core(spec)
++    |> Layers.output()
++  end
++
++  def model(%__MODULE__{architecture: :for_causal_language_modeling} = spec) do
++    inputs = inputs(spec)
++
++    outputs = core(inputs, spec)
++    logits = language_modeling_head(outputs.hidden_state, spec, name: "language_modeling_head")
++
++    Layers.output(%{
++      logits: logits,
++      hidden_states: outputs.hidden_states,
++      attentions: outputs.attentions,
++      cache: outputs.cache
++    })
++  end
++
++  defp inputs(spec) do
++    shape = {nil, nil}
++    hidden_shape = {nil, nil, spec.hidden_size}
++
++    Bumblebee.Utils.Model.inputs_to_map([
++      Axon.input("input_ids", optional: true, shape: shape),
++      Axon.input("attention_mask", optional: true, shape: shape),
++      Axon.input("position_ids", optional: true, shape: shape),
++      Axon.input("input_embeddings", optional: true, shape: hidden_shape),
++      Axon.input("cache", optional: true)
++    ])
++  end
++
++  defp core(inputs, spec) do
++    embeddings =
++      Layers.default inputs["input_embeddings"] do
++        Axon.embedding(inputs["input_ids"], spec.vocab_size, spec.hidden_size,
++          kernel_initializer: kernel_initializer(spec),
++          name: "embedder.token_embedding"
++        )
++      end
++
++    position_ids =
++      Layers.default inputs["position_ids"] do
++        Layers.default_position_ids(embeddings)
++      end
++
++    decoder_outputs =
++      decoder(
++        embeddings,
++        position_ids,
++        inputs["attention_mask"],
++        inputs["cache"],
++        spec,
++        name: "decoder"
++      )
++
++    hidden_state = rms_norm(decoder_outputs.hidden_state, spec, name: "output_norm")
++
++    %{
++      hidden_state: hidden_state,
++      hidden_states: Layers.append(decoder_outputs.hidden_states, hidden_state),
++      attentions: decoder_outputs.attentions,
++      cache: decoder_outputs.cache
++    }
++  end
++
++  defp decoder(hidden_state, position_ids, attention_mask, cache, spec, opts) do
++    name = opts[:name]
++
++    Layers.Transformer.blocks(
++      hidden_state,
++      [
++        num_blocks: spec.num_blocks,
++        attention_mask: attention_mask,
++        cache: cache,
++        name: join(name, "blocks")
++      ],
++      fn hidden_state, block ->
++        name = block.name
++
++        shortcut = hidden_state
++
++        normalized = rms_norm(hidden_state, spec, name: join(name, "self_attention_norm"))
++
++        {hidden_state, attention, self_attention_cache} =
++          case Enum.fetch!(spec.block_types, block.index) do
++            :full_attention ->
++              gated_attention(normalized, position_ids, block, spec,
++                name: join(name, "self_attention")
++              )
++
++            :linear_attention ->
++              {hidden_state, cache} =
++                gated_delta_net(normalized, attention_mask, block.self_attention_cache, spec,
++                  name: join(name, "linear_attention")
++                )
++
++              {hidden_state, Layers.none(), cache}
++          end
++
++        hidden_state = Axon.add(hidden_state, shortcut)
++
++        shortcut = hidden_state
++
++        hidden_state =
++          hidden_state
++          |> rms_norm(spec, name: join(name, "output_norm"))
++          |> Layers.Transformer.gated_ffn(spec.intermediate_size, spec.hidden_size,
++            activation: spec.activation,
++            name: join(name, "ffn")
++          )
++          |> Axon.add(shortcut)
++
++        %{
++          hidden_state: hidden_state,
++          attention: attention,
++          self_attention_cache: self_attention_cache
++        }
++      end
++    )
++  end
++
++  # Full attention, with a sigmoid gate on the output computed from the
++  # same projection as the query
++  defp gated_attention(hidden_state, position_ids, block, spec, opts) do
++    name = opts[:name]
++    head_size = spec.attention_head_size
++
++    query_and_gate =
++      Layers.Transformer.project_heads(hidden_state, spec.num_attention_heads, 2 * head_size,
++        use_bias: false,
++        kernel_initializer: kernel_initializer(spec),
++        name: join(name, "query")
++      )
++
++    query = Axon.nx(query_and_gate, & &1[[.., .., .., 0..(head_size - 1)//1]])
++
++    gate =
++      query_and_gate
++      |> Axon.nx(& &1[[.., .., .., head_size..-1//1]])
++      |> Layers.flatten_trailing()
++
++    project = fn suffix ->
++      Layers.Transformer.project_heads(hidden_state, spec.num_key_value_heads, head_size,
++        use_bias: false,
++        kernel_initializer: kernel_initializer(spec),
++        name: join(name, suffix)
++      )
++    end
++
++    key = project.("key")
++    value = project.("value")
++
++    query = rms_norm(query, spec, name: join(name, "query_norm"))
++    key = rms_norm(key, spec, name: join(name, "key_norm"))
++
++    # Multimodal rotary embedding splits positions into time, height and
++    # width sections, which all match for text, so it reduces to the 1D one
++    {query, key} =
++      Layers.Transformer.rotary_embedding(
++        query,
++        key,
++        block.attention_mask,
++        head_size,
++        [
++          position_ids: position_ids,
++          max_positions: spec.max_positions,
++          base: spec.rotary_embedding_base,
++          scaling_strategy: spec.rotary_embedding_scaling_strategy,
++          percentage: spec.rotary_embedding_percentage
++        ],
++        name: join(name, "rotary_embedding")
++      )
++
++    {key, value, attention_cache} =
++      Layers.Decoder.cached_attention_key_values(
++        key,
++        value,
++        block.self_attention_cache,
++        block.offset
++      )
++
++    num_key_value_groups = div(spec.num_attention_heads, spec.num_key_value_heads)
++    key = Layers.Transformer.repeat_heads(key, num_key_value_groups)
++    value = Layers.Transformer.repeat_heads(value, num_key_value_groups)
++
++    {attention_output, attention_weights} =
++      Layers.attention(
++        query,
++        key,
++        value,
++        block.attention_mask,
++        block.attention_head_mask,
++        Layers.none(),
++        block.offset,
++        causal: true
++      )
++
++    attention_output =
++      attention_output
++      |> Layers.flatten_trailing()
++      |> Axon.multiply(Axon.sigmoid(gate))
++      |> Axon.dense(spec.hidden_size,
++        use_bias: false,
++        kernel_initializer: kernel_initializer(spec),
++        name: join(name, "output")
++      )
++
++    {attention_output, attention_weights, attention_cache}
++  end
++
++  # Gated DeltaNet linear attention, see https://arxiv.org/abs/2412.06464
++  defp gated_delta_net(hidden_state, attention_mask, cache, spec, opts) do
++    name = opts[:name]
++
++    num_key_heads = spec.linear_attention_num_key_heads
++    num_value_heads = spec.linear_attention_num_value_heads
++    key_head_size = spec.linear_attention_key_head_size
++    value_head_size = spec.linear_attention_value_head_size
++    key_size = num_key_heads * key_head_size
++    value_size = num_value_heads * value_head_size
++
++    # Padding positions must not contribute to the convolution or the
++    # recurrent state
++    hidden_state =
++      Layers.if_present attention_mask do
++        Axon.layer(
++          fn hidden_state, attention_mask, _opts ->
++            attention_mask =
++              attention_mask |> Nx.new_axis(-1) |> Nx.as_type(Nx.type(hidden_state))
++
++            Nx.multiply(hidden_state, attention_mask)
++          end,
++          [hidden_state, attention_mask]
++        )
++      else
++        hidden_state
++      end
++
++    dense = fn units, suffix ->
++      Axon.dense(hidden_state, units,
++        use_bias: false,
++        kernel_initializer: kernel_initializer(spec),
++        name: join(name, suffix)
++      )
++    end
++
++    query_key_value = dense.(2 * key_size + value_size, "query_key_value")
++    output_gate = dense.(value_size, "output_gate")
++    beta = dense.(num_value_heads, "beta")
++    decay = dense.(num_value_heads, "decay")
++
++    {query_key_value, cache} =
++      causal_conv(query_key_value, cache, spec, name: join(name, "conv"))
++
++    query_key_value = Axon.activation(query_key_value, spec.activation)
++
++    split_heads = fn x, from, size, head_size ->
++      x
++      |> Axon.nx(&Nx.slice_along_axis(&1, from, size, axis: -1))
++      |> Layers.split_heads(div(size, head_size))
++    end
++
++    query = split_heads.(query_key_value, 0, key_size, key_head_size)
++    key = split_heads.(query_key_value, key_size, key_size, key_head_size)
++    value = split_heads.(query_key_value, 2 * key_size, value_size, value_head_size)
++
++    a_log = Axon.param("a_log", {num_value_heads}, initializer: :zeros)
++    dt_bias = Axon.param("dt_bias", {num_value_heads}, initializer: :ones)
++
++    {output, cache} =
++      Axon.layer(
++        &gated_delta_rule_impl/9,
++        [query, key, value, beta, decay, a_log, dt_bias, Axon.optional(cache)],
++        name: join(name, "delta_rule"),
++        num_value_heads: num_value_heads,
++        op_name: :gated_delta_rule
++      )
++      |> Layers.unwrap_tuple(2)
++
++    output =
++      Axon.layer(
++        &gated_rms_norm_impl/4,
++        [
++          output,
++          Layers.split_heads(output_gate, num_value_heads),
++          Axon.param("weight", {value_head_size}, initializer: :ones)
++        ],
++        name: join(name, "norm"),
++        epsilon: spec.layer_norm_epsilon,
++        op_name: :gated_rms_norm
++      )
++      |> Layers.flatten_trailing()
++      |> Axon.dense(spec.hidden_size,
++        use_bias: false,
++        kernel_initializer: kernel_initializer(spec),
++        name: join(name, "output")
++      )
++
++    {output, cache}
++  end
++
++  defp causal_conv(input, cache, spec, opts) do
++    kernel_size = spec.linear_attention_conv_kernel_size
++
++    kernel =
++      Axon.param("kernel", {linear_attention_conv_size(spec), kernel_size},
++        initializer: kernel_initializer(spec)
++      )
++
++    Axon.layer(&causal_conv_impl/4, [input, kernel, Axon.optional(cache)],
++      name: opts[:name],
++      op_name: :causal_conv
++    )
++    |> Layers.unwrap_tuple(2)
++  end
++
++  deftransformp causal_conv_impl(input, kernel, cache, _opts \\ []) do
++    {channels, kernel_size} = Nx.shape(kernel)
++    {batch_size, sequence_length, ^channels} = Nx.shape(input)
++
++    # The convolution sees the inputs of the preceding tokens, which are
++    # kept in the cache, or zeros at the start of the sequence
++    {window, cache} =
++      case cache do
++        %Axon.None{} ->
++          {Nx.broadcast(
++             Nx.tensor(0, type: Nx.type(input)),
++             {batch_size, kernel_size - 1, channels}
++           ), cache}
++
++        %{conv_state: conv_state} ->
++          {Nx.as_type(conv_state, Nx.type(input)), cache}
++      end
++
++    full_input = Nx.concatenate([window, input], axis: 1)
++
++    output =
++      0..(kernel_size - 1)
++      |> Enum.map(fn offset ->
++        full_input
++        |> Nx.slice_along_axis(offset, sequence_length, axis: 1)
++        |> Nx.multiply(kernel[[.., offset]])
++      end)
++      |> Enum.reduce(&Nx.add/2)
++
++    cache =
++      case cache do
++        %Axon.None{} ->
++          cache
++
++        %{conv_state: conv_state} = cache ->
++          window = Nx.slice_along_axis(full_input, sequence_length, kernel_size - 1, axis: 1)
++          %{cache | conv_state: Nx.as_type(window, Nx.type(conv_state))}
++      end
++
++    {output, cache}
++  end
++
++  deftransformp gated_delta_rule_impl(
++                  query,
++                  key,
++                  value,
++                  beta,
++                  decay,
++                  a_log,
++                  dt_bias,
++                  cache,
++                  opts \\ []
++                ) do
++    num_value_heads = opts[:num_value_heads]
++    type = Nx.type(value)
++    {batch_size, _sequence_length, num_key_heads, key_head_size} = Nx.shape(key)
++    value_head_size = Nx.axis_size(value, -1)
++
++    # Each query and key head serves consecutive value heads
++    repeat = div(num_value_heads, num_key_heads)
++    query = Bumblebee.Utils.Nx.repeat_interleave(query, repeat, axis: 2)
++    key = Bumblebee.Utils.Nx.repeat_interleave(key, repeat, axis: 2)
++
++    beta = Nx.sigmoid(Nx.as_type(beta, :f32))
++
++    decay = decay(decay, a_log, dt_bias)
++
++    state =
++      case cache do
++        %Axon.None{} ->
++          Nx.broadcast(0.0, {batch_size, num_value_heads, key_head_size, value_head_size})
++
++        %{recurrent_state: recurrent_state} ->
++          Nx.as_type(recurrent_state, :f32)
++      end
++
++    {output, state} =
++      gated_delta_rule(
++        Nx.as_type(query, :f32),
++        Nx.as_type(key, :f32),
++        Nx.as_type(value, :f32),
++        beta,
++        decay,
++        state
++      )
++
++    cache =
++      case cache do
++        %Axon.None{} ->
++          cache
++
++        %{recurrent_state: recurrent_state} = cache ->
++          %{cache | recurrent_state: Nx.as_type(state, Nx.type(recurrent_state))}
++      end
++
++    {Nx.as_type(output, type), cache}
++  end
++
++  defnp decay(decay, a_log, dt_bias) do
++    x = Nx.as_type(decay, :f32) + Nx.as_type(dt_bias, :f32)
++    # Matches torch.nn.functional.softplus, which is linear above 20
++    softplus = Nx.select(x > 20, x, Nx.log1p(Nx.exp(x)))
++    -Nx.exp(Nx.as_type(a_log, :f32)) * softplus
++  end
++
++  # Decoding a single token needs one step of the recurrence, without
++  # the loop over the sequence
++  deftransformp gated_delta_rule(query, key, value, beta, decay, state) do
++    if Nx.axis_size(value, 1) == 1 do
++      gated_delta_rule_single(query, key, value, beta, decay, state)
++    else
++      gated_delta_rule_loop(query, key, value, beta, decay, state)
++    end
++  end
++
++  defnp gated_delta_rule_single(query, key, value, beta, decay, state) do
++    {query, key} = normalize_query_key(query, key)
++
++    {output, state} =
++      delta_step(
++        Nx.squeeze(query, axes: [1]),
++        Nx.squeeze(key, axes: [1]),
++        Nx.squeeze(value, axes: [1]),
++        Nx.squeeze(beta, axes: [1]),
++        Nx.squeeze(decay, axes: [1]),
++        state
++      )
++
++    {Nx.new_axis(output, 1), state}
++  end
++
++  # Processes the sequence one token at a time, updating the recurrent
++  # state with the delta rule, as in the recurrent form of the reference
++  # implementation
++  defnp gated_delta_rule_loop(query, key, value, beta, decay, state) do
++    {query, key} = normalize_query_key(query, key)
++
++    sequence_length = Nx.axis_size(value, 1)
++    output = Nx.broadcast(0.0, value)
++
++    {output, state, _query, _key, _value, _beta, _decay, _index} =
++      while {output, state, query, key, value, beta, decay, index = 0},
++            index < sequence_length do
++        {o, state} =
++          delta_step(
++            take_step(query, index),
++            take_step(key, index),
++            take_step(value, index),
++            take_step(beta, index),
++            take_step(decay, index),
++            state
++          )
++
++        output = Nx.put_slice(output, [0, index, 0, 0], Nx.new_axis(o, 1))
++        {output, state, query, key, value, beta, decay, index + 1}
++      end
++
++    {output, state}
++  end
++
++  defnp normalize_query_key(query, key) do
++    {l2_normalize(query) / Nx.sqrt(Nx.axis_size(query, -1)), l2_normalize(key)}
++  end
++
++  defnp delta_step(q, k, v, b, d, state) do
++    state = state * (d |> Nx.exp() |> Nx.new_axis(-1) |> Nx.new_axis(-1))
++    memory = Nx.sum(state * Nx.new_axis(k, -1), axes: [2])
++    delta = (v - memory) * Nx.new_axis(b, -1)
++    state = state + Nx.new_axis(k, -1) * Nx.new_axis(delta, 2)
++    {Nx.sum(state * Nx.new_axis(q, -1), axes: [2]), state}
++  end
++
++  defnp take_step(tensor, index) do
++    tensor
++    |> Nx.slice_along_axis(index, 1, axis: 1)
++    |> Nx.squeeze(axes: [1])
++  end
++
++  defnp l2_normalize(x) do
++    x * Nx.rsqrt(Nx.sum(x * x, axes: [-1], keep_axes: true) + 1.0e-6)
++  end
++
++  defnp gated_rms_norm_impl(input, gate, weight, opts \\ []) do
++    opts = keyword!(opts, epsilon: 1.0e-6, mode: :inference)
++    type = Nx.type(input)
++
++    input = Nx.as_type(input, :f32)
++    variance = Nx.mean(input * input, axes: [-1], keep_axes: true)
++    normalized = Nx.as_type(input * Nx.rsqrt(variance + opts[:epsilon]), type)
++
++    gate = Nx.as_type(gate, :f32)
++    Nx.as_type(weight * normalized * (gate * Nx.sigmoid(gate)), type)
++  end
++
++  defp rms_norm(hidden_state, spec, opts) do
++    Layers.rms_norm(hidden_state,
++      name: opts[:name],
++      shift: 1.0,
++      epsilon: spec.layer_norm_epsilon,
++      upcast: :all,
++      initializer: :zeros
++    )
++  end
++
++  defp language_modeling_head(hidden_state, spec, opts) do
++    name = opts[:name]
++
++    Layers.dense_transposed(hidden_state, spec.vocab_size,
++      kernel_initializer: kernel_initializer(spec),
++      name: join(name, "output")
++    )
++  end
++
++  defp linear_attention_conv_size(spec) do
++    2 * spec.linear_attention_num_key_heads * spec.linear_attention_key_head_size +
++      spec.linear_attention_num_value_heads * spec.linear_attention_value_head_size
++  end
++
++  defp kernel_initializer(spec) do
++    Axon.Initializers.normal(scale: spec.initializer_scale)
++  end
++
++  defimpl Bumblebee.HuggingFace.Transformers.Config do
++    def load(spec, data) do
++      import Shared.Converters
++
++      # Multimodal checkpoints nest the language model configuration
++      data =
++        case data do
++          %{"text_config" => text_data} ->
++            Map.put_new(text_data, "tie_word_embeddings", data["tie_word_embeddings"])
++
++          data ->
++            data
++        end
++
++      # Qwen3.5 configurations set unused token ids to null
++      data =
++        Map.reject(data, fn {key, value} ->
++          key in ["pad_token_id", "bos_token_id", "eos_token_id"] and value == nil
++        end)
++
++      opts =
++        convert!(data,
++          vocab_size: {"vocab_size", number()},
++          tie_word_embeddings: {"tie_word_embeddings", boolean()},
++          max_positions: {"max_position_embeddings", number()},
++          hidden_size: {"hidden_size", number()},
++          num_blocks: {"num_hidden_layers", number()},
++          block_types:
++            {"layer_types",
++             list(
++               mapping(%{
++                 "linear_attention" => :linear_attention,
++                 "full_attention" => :full_attention
++               })
++             )},
++          num_attention_heads: {"num_attention_heads", number()},
++          num_key_value_heads: {"num_key_value_heads", number()},
++          attention_head_size: {"head_dim", number()},
++          linear_attention_num_key_heads: {"linear_num_key_heads", number()},
++          linear_attention_num_value_heads: {"linear_num_value_heads", number()},
++          linear_attention_key_head_size: {"linear_key_head_dim", number()},
++          linear_attention_value_head_size: {"linear_value_head_dim", number()},
++          linear_attention_conv_kernel_size: {"linear_conv_kernel_dim", number()},
++          intermediate_size: {"intermediate_size", number()},
++          activation: {"hidden_act", activation()},
++          initializer_scale: {"initializer_range", number()},
++          layer_norm_epsilon: {"rms_norm_eps", number()}
++        ) ++
++          Shared.rotary_embedding_options_from_transformers(data) ++
++          Shared.common_options_from_transformers(data, spec)
++
++      @for.config(spec, opts)
++    end
++  end
++
++  defimpl Bumblebee.HuggingFace.Transformers.Model do
++    def params_mapping(spec) do
++      # Text-only, multimodal and MLX checkpoints store the language
++      # model under different prefixes
++      layer = fn name ->
++        [
++          "model." <> name,
++          "model.language_model." <> name,
++          "language_model.model." <> name
++        ]
++      end
++
++      # MLX checkpoints store these norm weights with the shift of 1
++      # added, and the convolution kernel as {channels, kernel_size, 1}
++      # instead of {channels, 1, kernel_size}. As in mlx-lm, the kernel
++      # layout tells the two apart
++      norm = fn name ->
++        %{
++          "weight" =>
++            {[
++               param_refs(layer.(name), "weight"),
++               param_refs(layer.("layers.0.linear_attn.conv1d"), "weight")
++             ],
++             fn [weight, conv_kernel] ->
++               if Nx.axis_size(conv_kernel, -1) == 1, do: Nx.subtract(weight, 1), else: weight
++             end}
++        }
++      end
++
++      %{
++        "embedder.token_embedding" => layer.("embed_tokens"),
++        "decoder.blocks.{n}.self_attention_norm" => norm.("layers.{n}.input_layernorm"),
++        "decoder.blocks.{n}.self_attention.query" => layer.("layers.{n}.self_attn.q_proj"),
++        "decoder.blocks.{n}.self_attention.key" => layer.("layers.{n}.self_attn.k_proj"),
++        "decoder.blocks.{n}.self_attention.value" => layer.("layers.{n}.self_attn.v_proj"),
++        "decoder.blocks.{n}.self_attention.output" => layer.("layers.{n}.self_attn.o_proj"),
++        "decoder.blocks.{n}.self_attention.query_norm" => norm.("layers.{n}.self_attn.q_norm"),
++        "decoder.blocks.{n}.self_attention.key_norm" => norm.("layers.{n}.self_attn.k_norm"),
++        "decoder.blocks.{n}.linear_attention.query_key_value" =>
++          layer.("layers.{n}.linear_attn.in_proj_qkv"),
++        "decoder.blocks.{n}.linear_attention.output_gate" =>
++          layer.("layers.{n}.linear_attn.in_proj_z"),
++        "decoder.blocks.{n}.linear_attention.beta" => layer.("layers.{n}.linear_attn.in_proj_b"),
++        "decoder.blocks.{n}.linear_attention.decay" => layer.("layers.{n}.linear_attn.in_proj_a"),
++        "decoder.blocks.{n}.linear_attention.conv" => %{
++          "kernel" =>
++            {[param_refs(layer.("layers.{n}.linear_attn.conv1d"), "weight")],
++             fn [kernel] ->
++               {channels, _, _} = Nx.shape(kernel)
++               Nx.reshape(kernel, {channels, :auto})
++             end}
++        },
++        "decoder.blocks.{n}.linear_attention.delta_rule" => %{
++          "a_log" => {[param_refs(layer.("layers.{n}.linear_attn"), "A_log")], fn [x] -> x end},
++          "dt_bias" =>
++            {[param_refs(layer.("layers.{n}.linear_attn"), "dt_bias")], fn [x] -> x end}
++        },
++        "decoder.blocks.{n}.linear_attention.norm" => layer.("layers.{n}.linear_attn.norm"),
++        "decoder.blocks.{n}.linear_attention.output" => layer.("layers.{n}.linear_attn.out_proj"),
++        "decoder.blocks.{n}.ffn.gate" => layer.("layers.{n}.mlp.gate_proj"),
++        "decoder.blocks.{n}.ffn.intermediate" => layer.("layers.{n}.mlp.up_proj"),
++        "decoder.blocks.{n}.ffn.output" => layer.("layers.{n}.mlp.down_proj"),
++        "decoder.blocks.{n}.output_norm" => norm.("layers.{n}.post_attention_layernorm"),
++        "output_norm" => norm.("norm"),
++        "language_modeling_head.output" =>
++          if(spec.tie_word_embeddings,
++            do: layer.("embed_tokens"),
++            else: ["lm_head", "language_model.lm_head"]
++          )
++      }
++    end
++
++    defp param_refs(layer_names, param_name) do
++      for layer_name <- layer_names, do: {layer_name, param_name}
++    end
++  end
++end
+diff --git a/mix.exs b/mix.exs
+index 5d84035..ae61bde 100644
+--- a/mix.exs
++++ b/mix.exs
+@@ -106,6 +106,7 @@ defmodule Bumblebee.MixProject do
+           Bumblebee.Text.Phi,
+           Bumblebee.Text.Phi3,
+           Bumblebee.Text.Qwen3,
++          Bumblebee.Text.Qwen3_5,
+           Bumblebee.Text.Roberta,
+           Bumblebee.Text.SmolLm3,
+           Bumblebee.Text.T5,
+diff --git a/test/bumblebee/text/qwen3_5_test.exs b/test/bumblebee/text/qwen3_5_test.exs
+new file mode 100644
+index 0000000..686a7ee
+--- /dev/null
++++ b/test/bumblebee/text/qwen3_5_test.exs
+@@ -0,0 +1,186 @@
++defmodule Bumblebee.Text.Qwen3_5Test do
++  use ExUnit.Case, async: false
++
++  import Bumblebee.TestHelpers
++
++  @moduletag model_test_tags()
++
++  test ":base" do
++    assert {:ok, %{model: model, params: params, spec: spec}} =
++             Bumblebee.load_model({:hf, "bumblebee-testing/tiny-random-Qwen3_5ForCausalLM"},
++               architecture: :base
++             )
++
++    assert %Bumblebee.Text.Qwen3_5{architecture: :base} = spec
++
++    assert spec.block_types == [
++             :linear_attention,
++             :linear_attention,
++             :linear_attention,
++             :full_attention,
++             :linear_attention
++           ]
++
++    inputs = %{
++      "input_ids" => Nx.tensor([[10, 20, 30, 40, 50, 60, 70, 80, 0, 0]]),
++      "attention_mask" => Nx.tensor([[1, 1, 1, 1, 1, 1, 1, 1, 0, 0]])
++    }
++
++    outputs = Axon.predict(model, params, inputs)
++
++    assert Nx.shape(outputs.hidden_state) == {1, 10, 32}
++
++    assert_all_close(
++      outputs.hidden_state[[.., 1..3, 1..3]],
++      Nx.tensor([
++        [[1.4133, 0.5996, -2.3100], [1.2465, 0.0291, 0.3573], [-1.9832, -0.8136, 0.5604]]
++      ]),
++      atol: 1.0e-4
++    )
++  end
++
++  test ":for_causal_language_modeling" do
++    assert {:ok, %{model: model, params: params, spec: spec}} =
++             Bumblebee.load_model({:hf, "bumblebee-testing/tiny-random-Qwen3_5ForCausalLM"})
++
++    assert %Bumblebee.Text.Qwen3_5{architecture: :for_causal_language_modeling} = spec
++
++    inputs = %{
++      "input_ids" => Nx.tensor([[10, 20, 30, 40, 50, 60, 70, 80, 0, 0]]),
++      "attention_mask" => Nx.tensor([[1, 1, 1, 1, 1, 1, 1, 1, 0, 0]])
++    }
++
++    outputs = Axon.predict(model, params, inputs)
++
++    assert Nx.shape(outputs.logits) == {1, 10, 1024}
++
++    assert_all_close(
++      outputs.logits[[.., 1..3, 1..3]],
++      Nx.tensor([
++        [[0.4915, 2.3465, -0.1588], [1.1608, -0.5369, 0.9091], [0.7094, 1.0836, -1.3933]]
++      ]),
++      atol: 1.0e-4
++    )
++  end
++
++  test ":for_causal_language_modeling from a multimodal checkpoint" do
++    assert {:ok, %{model: model, params: params, spec: spec}} =
++             Bumblebee.load_model(
++               {:hf, "bumblebee-testing/tiny-random-Qwen3_5ForConditionalGeneration"}
++             )
++
++    assert %Bumblebee.Text.Qwen3_5{architecture: :for_causal_language_modeling} = spec
++
++    inputs = %{
++      "input_ids" => Nx.tensor([[10, 20, 30, 40, 50, 60, 70, 80, 0, 0]]),
++      "attention_mask" => Nx.tensor([[1, 1, 1, 1, 1, 1, 1, 1, 0, 0]])
++    }
++
++    outputs = Axon.predict(model, params, inputs)
++
++    assert_all_close(
++      outputs.logits[[.., 1..3, 1..3]],
++      Nx.tensor([
++        [[0.7326, 1.1803, 0.4093], [1.0902, 0.5977, 0.2788], [-0.6475, 0.8144, 0.5186]]
++      ]),
++      atol: 1.0e-4
++    )
++  end
++
++  test ":for_causal_language_modeling from an MLX checkpoint" do
++    # The same weights as the multimodal checkpoint, converted with mlx-lm,
++    # which renames them, moves the convolution kernel axis and adds the
++    # norm shift to the weights
++    assert {:ok, %{model: model, params: params, spec: spec}} =
++             Bumblebee.load_model(
++               {:hf, "bumblebee-testing/tiny-random-Qwen3_5ForConditionalGeneration-mlx"}
++             )
++
++    assert %Bumblebee.Text.Qwen3_5{architecture: :for_causal_language_modeling} = spec
++
++    inputs = %{
++      "input_ids" => Nx.tensor([[10, 20, 30, 40, 50, 60, 70, 80, 0, 0]]),
++      "attention_mask" => Nx.tensor([[1, 1, 1, 1, 1, 1, 1, 1, 0, 0]])
++    }
++
++    outputs = Axon.predict(model, params, inputs)
++
++    assert_all_close(
++      outputs.logits[[.., 1..3, 1..3]],
++      Nx.tensor([
++        [[0.7326, 1.1803, 0.4093], [1.0902, 0.5977, 0.2788], [-0.6475, 0.8144, 0.5186]]
++      ]),
++      atol: 1.0e-4
++    )
++  end
++
++  test "generation with cache" do
++    repo = {:hf, "bumblebee-testing/tiny-random-Qwen3_5ForCausalLM"}
++    assert {:ok, %{model: model, params: params, spec: spec}} = Bumblebee.load_model(repo)
++    {:ok, generation_config} = Bumblebee.load_generation_config(repo)
++
++    generation_config =
++      Bumblebee.configure(generation_config,
++        max_new_tokens: 8,
++        strategy: %{type: :greedy_search},
++        eos_token_id: nil,
++        pad_token_id: 0
++      )
++
++    inputs = %{
++      "input_ids" => Nx.tensor([[10, 20, 30, 40, 50, 60, 70, 80]]),
++      "attention_mask" => Nx.tensor([[1, 1, 1, 1, 1, 1, 1, 1]]),
++      "seed" => Nx.tensor([0])
++    }
++
++    generate = Bumblebee.Text.Generation.build_generate(model, spec, generation_config)
++    %{token_ids: token_ids} = generate.(params, inputs)
++
++    assert_equal(token_ids, Nx.tensor([[279, 537, 784, 485, 860, 775, 279, 973]]))
++  end
++
++  test "left padding gives the same logits as unpadded inputs" do
++    assert {:ok, %{model: model, params: params}} =
++             Bumblebee.load_model({:hf, "bumblebee-testing/tiny-random-Qwen3_5ForCausalLM"})
++
++    unpadded =
++      Axon.predict(model, params, %{
++        "input_ids" => Nx.tensor([[10, 20, 30, 40, 50, 60]])
++      })
++
++    # Position ids skip the padding, as in generation
++    padded =
++      Axon.predict(model, params, %{
++        "input_ids" => Nx.tensor([[0, 0, 10, 20, 30, 40, 50, 60]]),
++        "attention_mask" => Nx.tensor([[0, 0, 1, 1, 1, 1, 1, 1]]),
++        "position_ids" => Nx.tensor([[0, 0, 0, 1, 2, 3, 4, 5]])
++      })
++
++    assert_all_close(padded.logits[[.., 2..-1//1]], unpadded.logits, atol: 1.0e-5)
++  end
++
++  test "loads generation attributes from the text configuration" do
++    # Multimodal checkpoints without generation_config.json keep the
++    # token ids in the nested text configuration
++    data = %{"model_type" => "qwen3_5", "text_config" => %{"eos_token_id" => 248_044}}
++
++    config =
++      Bumblebee.HuggingFace.Transformers.Config.load(%Bumblebee.Text.GenerationConfig{}, data)
++
++    assert config.eos_token_id == 248_044
++  end
++
++  test "refuses the mixture-of-experts variant" do
++    path = Path.join(System.tmp_dir!(), "bumblebee-qwen3_5-moe")
++    File.mkdir_p!(path)
++
++    File.write!(
++      Path.join(path, "config.json"),
++      ~s({"architectures": ["Qwen3_5MoeForConditionalGeneration"], "model_type": "qwen3_5_moe"})
++    )
++
++    assert_raise ArgumentError, ~r/"Qwen3_5MoeForConditionalGeneration"/, fn ->
++      Bumblebee.load_spec({:local, path})
++    end
++  end
++end
