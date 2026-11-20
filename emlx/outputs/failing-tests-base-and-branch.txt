@@ -1,0 +1,27 @@
+BASE d5c78ae
+  1) test EMLX.Fast.scaled_dot_product_attention_causal/5 with :sinks matches the softmax-with-sinks fallback math with an implicit causal mask (EMLX.SdpaSinksTest)
+  2) test EMLX.Fast.scaled_dot_product_attention/5 (opts, no mask) with :sinks matches the softmax-with-sinks fallback math (EMLX.SdpaSinksTest)
+  3) test EMLX.Fast.scaled_dot_product_attention_causal_key_masked/6 with :sinks padded key_mask (non-trivial branch) matches combined causal+key_mask fallback math (EMLX.SdpaSinksTest)
+  4) test EMLX.Fast.scaled_dot_product_attention/6 (mask + :sinks) matches the softmax-with-sinks fallback math with an additive causal mask (EMLX.SdpaSinksTest)
+  5) test native linalg: svd/1 (GPU eager fallback via defn_evaluator) full_matrices?: true on a GPU-resident tensor doesn't crash under compiler: Nx.Defn.Evaluator (EMLX.Nx.LinalgTest)
+  6) test EMLX.causal_kv_attention/7 prefill updates compact GQA cache and returns attention output (EMLX.FastTest)
+  7) test gpu a compiled call takes lazy inputs and the lazy outputs of another call (EMLX.AsyncEvalTest)
+  8) test gpu async_eval and then a read give the values of the tensors (EMLX.AsyncEvalTest)
+  9) test gpu a read right after eval has the values while later work runs (EMLX.AsyncEvalTest)
+ 10) test gpu a pipelined loop reads each step after it schedules the next one (EMLX.AsyncEvalTest)
+Finished in 0.4 seconds (0.2s async, 0.1s sync)
+Result: 74/84 passed (2/2 doctests, 72/82 tests), 1 excluded
+BRANCH 1ff343b
+  1) test EMLX.Fast.scaled_dot_product_attention_causal/5 with :sinks matches the softmax-with-sinks fallback math with an implicit causal mask (EMLX.SdpaSinksTest)
+  2) test EMLX.Fast.scaled_dot_product_attention_causal_key_masked/6 with :sinks padded key_mask (non-trivial branch) matches combined causal+key_mask fallback math (EMLX.SdpaSinksTest)
+  3) test EMLX.Fast.scaled_dot_product_attention/5 (opts, no mask) with :sinks matches the softmax-with-sinks fallback math (EMLX.SdpaSinksTest)
+  4) test EMLX.Fast.scaled_dot_product_attention/6 (mask + :sinks) matches the softmax-with-sinks fallback math with an additive causal mask (EMLX.SdpaSinksTest)
+  5) test native linalg: svd/1 (GPU eager fallback via defn_evaluator) full_matrices?: true on a GPU-resident tensor doesn't crash under compiler: Nx.Defn.Evaluator (EMLX.Nx.LinalgTest)
+  6) test gpu a compiled call takes lazy inputs and the lazy outputs of another call (EMLX.AsyncEvalTest)
+  7) test gpu a pipelined loop reads each step after it schedules the next one (EMLX.AsyncEvalTest)
+  8) test gpu async_eval and then a read give the values of the tensors (EMLX.AsyncEvalTest)
+  9) test EMLX.causal_kv_attention/7 prefill updates compact GQA cache and returns attention output (EMLX.FastTest)
+ 10) test gpu a read right after eval has the values while later work runs (EMLX.AsyncEvalTest)
+Finished in 0.4 seconds (0.2s async, 0.1s sync)
+Result: 74/84 passed (2/2 doctests, 72/82 tests), 1 excluded
+

@@ -1,0 +1,116 @@
+{
+  "tiny-random-Qwen3ForCausalLM-mlx-4bit": {
+    "quantization": {
+      "group_size": 32,
+      "bits": 4,
+      "mode": "affine"
+    },
+    "quantized_weights": [
+      "lm_head",
+      "model.embed_tokens",
+      "model.layers.0.mlp.gate_proj",
+      "model.layers.0.mlp.up_proj",
+      "model.layers.0.self_attn.k_proj",
+      "model.layers.0.self_attn.o_proj",
+      "model.layers.0.self_attn.q_proj",
+      "model.layers.0.self_attn.v_proj",
+      "model.layers.1.mlp.gate_proj",
+      "model.layers.1.mlp.up_proj",
+      "model.layers.1.self_attn.k_proj",
+      "model.layers.1.self_attn.o_proj",
+      "model.layers.1.self_attn.q_proj",
+      "model.layers.1.self_attn.v_proj"
+    ],
+    "logits": [
+      [
+        0.16010373830795288,
+        0.08222253620624542,
+        -0.08075738698244095
+      ],
+      [
+        0.16099748015403748,
+        -0.02050595171749592,
+        -0.00571104884147644
+      ],
+      [
+        0.2381109893321991,
+        -0.004416821524500847,
+        -0.026187844574451447
+      ]
+    ],
+    "embedding": [
+      [
+        -0.037292640656232834,
+        -0.006215440109372139,
+        -0.006215440109372139
+      ],
+      [
+        -0.00646724458783865,
+        -0.06467246264219284,
+        0.01940174028277397
+      ],
+      [
+        -0.02648824080824852,
+        -0.010595295578241348,
+        0.01589294895529747
+      ]
+    ]
+  },
+  "tiny-random-Qwen3ForCausalLM-mlx-8bit": {
+    "quantization": {
+      "group_size": 32,
+      "bits": 8,
+      "mode": "affine"
+    },
+    "quantized_weights": [
+      "lm_head",
+      "model.embed_tokens",
+      "model.layers.0.mlp.gate_proj",
+      "model.layers.0.mlp.up_proj",
+      "model.layers.0.self_attn.k_proj",
+      "model.layers.0.self_attn.o_proj",
+      "model.layers.0.self_attn.q_proj",
+      "model.layers.0.self_attn.v_proj",
+      "model.layers.1.mlp.gate_proj",
+      "model.layers.1.mlp.up_proj",
+      "model.layers.1.self_attn.k_proj",
+      "model.layers.1.self_attn.o_proj",
+      "model.layers.1.self_attn.q_proj",
+      "model.layers.1.self_attn.v_proj"
+    ],
+    "logits": [
+      [
+        0.14587318897247314,
+        0.03145778924226761,
+        -0.06309662014245987
+      ],
+      [
+        0.1726727932691574,
+        -0.02600468322634697,
+        -0.01985628344118595
+      ],
+      [
+        0.22990477085113525,
+        -0.01049850694835186,
+        -0.01598268374800682
+      ]
+    ],
+    "embedding": [
+      [
+        -0.039854731410741806,
+        -0.00379568780772388,
+        -0.005313963163644075
+      ],
+      [
+        -0.007988953031599522,
+        -0.06467246264219284,
+        0.016738751903176308
+      ],
+      [
+        -0.02889627031981945,
+        -0.00866888277232647,
+        0.01605347916483879
+      ]
+    ]
+  }
+}

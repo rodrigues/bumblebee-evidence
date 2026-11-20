@@ -1,0 +1,455 @@
+diff --git a/lib/bumblebee.ex b/lib/bumblebee.ex
+index 7d82beb..54289ab 100644
+--- a/lib/bumblebee.ex
++++ b/lib/bumblebee.ex
+@@ -551,6 +551,24 @@ defmodule Bumblebee do
+   If you want to use a lower precision for inference, make sure to
+   also specify `:type`.
+ 
++  ## MLX quantized checkpoints
++
++  Checkpoints quantized with MLX, such as the ones published under
++  [mlx-community](https://huggingface.co/mlx-community), load on the
++  [EMLX](https://github.com/elixir-nx/emlx) backend, which runs matrix
++  multiplications directly on the quantized weights. Their memory use
++  is close to the size of the checkpoint files:
++
++      {:ok, model_info} =
++        Bumblebee.load_model({:hf, "mlx-community/Qwen3-4B-Instruct-2507-4bit"},
++          backend: {EMLX.Backend, device: :gpu},
++          type: :bf16
++        )
++
++  The weights of dense layers stay quantized, and other weights, such
++  as embedding tables, are dequantized when loading. Only the affine
++  quantization mode is supported.
++
+   ## Options
+ 
+     * `:spec` - the model specification to use when building the model.
+@@ -673,11 +691,13 @@ defmodule Bumblebee do
+       |> Path.extname()
+       |> params_file_loader_fun(opts)
+ 
+-    with {:ok, paths} <- download_params_files(repository, repo_files, filename, sharded?) do
++    with {:ok, paths} <- download_params_files(repository, repo_files, filename, sharded?),
++         {:ok, quantization} <- load_quantization(repository, repo_files) do
+       opts =
+         [
+           params_mapping: params_mapping,
+-          loader_fun: loader_fun
++          loader_fun: loader_fun,
++          quantization: quantization
+         ] ++ Keyword.take(opts, [:backend, :log_params_diff])
+ 
+       params = Bumblebee.Conversion.PyTorchParams.load_params!(model, input_template, paths, opts)
+@@ -685,6 +705,20 @@ defmodule Bumblebee do
+     end
+   end
+ 
++  # MLX quantized checkpoints describe their quantization under this key
++  defp load_quantization(repository, repo_files) do
++    case repo_files do
++      %{@config_filename => etag} ->
++        with {:ok, path} <- download(repository, @config_filename, etag),
++             {:ok, config} <- decode_config(path) do
++          {:ok, config["quantization"]}
++        end
++
++      %{} ->
++        {:ok, nil}
++    end
++  end
++
+   defp infer_params_filename(repo_files, nil = _filename, variant) do
+     validate_variant!(repo_files, variant)
+ 
+diff --git a/lib/bumblebee/conversion/mlx_quantization.ex b/lib/bumblebee/conversion/mlx_quantization.ex
+new file mode 100644
+index 0000000..3220a5b
+--- /dev/null
++++ b/lib/bumblebee/conversion/mlx_quantization.ex
+@@ -0,0 +1,131 @@
++defmodule Bumblebee.Conversion.MLXQuantization do
++  @moduledoc false
++
++  # MLX quantized checkpoints store each quantized weight as packed
++  # unsigned 32-bit words, next to a scale and a bias for every group
++  # of values along its last axis. EMLX runs matrix multiplications
++  # directly on that representation, so these weights are kept packed.
++
++  @compile {:no_warn_undefined, [EMLX.Backend, EMLX.Quantization]}
++
++  defmodule QuantizedTensor do
++    @moduledoc false
++
++    # A lazy quantized weight, read from the checkpoint only when used.
++    defstruct [:weight, :scales, :biases, :shape, :bits, :group_size]
++  end
++
++  @doc """
++  Validates the "quantization" entry of an MLX checkpoint configuration.
++  """
++  def validate!(quantization, backend) do
++    mode = Map.get(quantization, "mode", "affine")
++
++    unless mode == "affine" do
++      raise ArgumentError,
++            "MLX quantized weights in #{inspect(mode)} mode are not supported, only \"affine\" is"
++    end
++
++    unless emlx_backend?(backend) do
++      raise ArgumentError,
++            "loading MLX quantized weights requires the EMLX backend, " <>
++              "pass backend: {EMLX.Backend, device: :gpu} or set it as the default backend"
++    end
++
++    :ok
++  end
++
++  defp emlx_backend?(backend) do
++    module =
++      case backend || Nx.default_backend() do
++        {module, _opts} -> module
++        module -> module
++      end
++
++    module == EMLX.Backend and Code.ensure_loaded?(EMLX.Quantization)
++  end
++
++  @doc """
++  Replaces each quantized weight in the state dictionary, together
++  with its scales and biases, by a single lazy quantized tensor.
++  """
++  def quantize_state(state, quantization) do
++    prefixes =
++      for key <- Map.keys(state), String.ends_with?(key, ".scales") do
++        String.replace_suffix(key, ".scales", "")
++      end
++
++    Enum.reduce(prefixes, state, fn prefix, state ->
++      {weight, state} = Map.pop!(state, prefix <> ".weight")
++      {scales, state} = Map.pop!(state, prefix <> ".scales")
++      {biases, state} = Map.pop!(state, prefix <> ".biases")
++
++      %{"bits" => bits, "group_size" => group_size} = layer_quantization(quantization, prefix)
++      {out_features, num_groups} = lazy_shape(scales)
++
++      quantized = %QuantizedTensor{
++        weight: weight,
++        scales: scales,
++        biases: biases,
++        shape: {out_features, num_groups * group_size},
++        bits: bits,
++        group_size: group_size
++      }
++
++      Map.put(state, prefix <> ".weight", quantized)
++    end)
++  end
++
++  # Mixed-precision conversions override the default per layer
++  defp layer_quantization(quantization, prefix) do
++    case quantization do
++      %{^prefix => %{} = override} -> Map.merge(quantization, override)
++      %{} -> quantization
++    end
++  end
++
++  defp lazy_shape(lazy) do
++    {template, _} =
++      Nx.LazyContainer.traverse(lazy, nil, fn template, _fun, acc -> {template, acc} end)
++
++    Nx.shape(template)
++  end
++
++  @doc """
++  Reads a lazy quantized tensor into an EMLX quantized tensor.
++  """
++  def materialize(%QuantizedTensor{} = quantized) do
++    [weight, scales, biases] =
++      for lazy <- [quantized.weight, quantized.scales, quantized.biases] do
++        lazy |> Nx.to_tensor() |> EMLX.Backend.from_nx()
++      end
++
++    EMLX.Quantization.quantized_tensor(weight, scales, biases, quantized.shape,
++      type: {:s, quantized.bits},
++      group_size: quantized.group_size
++    )
++  end
++
++  @doc """
++  Returns whether the given tensor is quantized.
++  """
++  def quantized?(%Nx.Tensor{data: %{__struct__: EMLX.Backend}} = tensor) do
++    EMLX.Quantization.quantized?(tensor)
++  end
++
++  def quantized?(_tensor), do: false
++
++  @doc """
++  Converts a quantized tensor to a regular tensor.
++  """
++  def dequantize(tensor) do
++    if quantized?(tensor), do: EMLX.Quantization.dequantize(tensor), else: tensor
++  end
++
++  defimpl Nx.LazyContainer, for: QuantizedTensor do
++    def traverse(quantized, acc, fun) do
++      template = Nx.template(quantized.shape, {:s, quantized.bits})
++      fun.(template, fn -> Bumblebee.Conversion.MLXQuantization.materialize(quantized) end, acc)
++    end
++  end
++end
+diff --git a/lib/bumblebee/conversion/pytorch_params.ex b/lib/bumblebee/conversion/pytorch_params.ex
+index c17fef8..fbc7b49 100644
+--- a/lib/bumblebee/conversion/pytorch_params.ex
++++ b/lib/bumblebee/conversion/pytorch_params.ex
+@@ -4,6 +4,7 @@ defmodule Bumblebee.Conversion.PyTorchParams do
+   require Logger
+ 
+   alias Bumblebee.Utils
++  alias Bumblebee.Conversion.MLXQuantization
+ 
+   @doc """
+   Loads parameters from a PyTorch model state dictionary.
+@@ -28,6 +29,10 @@ defmodule Bumblebee.Conversion.PyTorchParams do
+       and loads the params file. Defaults to
+       `Bumblebee.Conversion.PyTorchLoader.load!/1`
+ 
++    * `:quantization` - the "quantization" entry of an MLX checkpoint
++      configuration. When given, quantized weights are loaded as EMLX
++      quantized tensors
++
+   """
+   @spec load_params!(Axon.t(), map(), Path.t() | list(Path.t()), keyword()) :: %Axon.ModelState{}
+   def load_params!(model, input_template, path, opts \\ []) do
+@@ -36,6 +41,7 @@ defmodule Bumblebee.Conversion.PyTorchParams do
+       |> Keyword.validate!([
+         :log_params_diff,
+         :backend,
++        :quantization,
+         params_mapping: %{},
+         loader_fun: &Bumblebee.Conversion.PyTorchLoader.load!/1
+       ])
+@@ -55,6 +61,14 @@ defmodule Bumblebee.Conversion.PyTorchParams do
+         end)
+         |> Enum.reduce(&Map.merge/2)
+ 
++      pytorch_state =
++        if quantization = opts[:quantization] do
++          MLXQuantization.validate!(quantization, opts[:backend])
++          MLXQuantization.quantize_state(pytorch_state, quantization)
++        else
++          pytorch_state
++        end
++
+       model_state = Axon.trace_init(model, input_template)
+ 
+       params_expr = model_state.data
+@@ -115,11 +129,12 @@ defmodule Bumblebee.Conversion.PyTorchParams do
+           Enum.reduce(layer.parameters, {[], diff}, fn param, {params, diff} ->
+             param_expr = params_expr[layer_name][param.name]
+ 
+-            {sources, builder_fun} =
++            {sources, builder_fun, keep_quantized?} =
+               case params_source do
+                 %{} = param_builders ->
+                   if param_builder = param_builders[param.name] do
+-                    param_builder
++                    {sources, builder_fun} = param_builder
++                    {sources, builder_fun, false}
+                   else
+                     raise "no matching mapping found for parameter #{inspect(param.name)} in #{inspect(param_builders)}"
+                   end
+@@ -127,7 +142,14 @@ defmodule Bumblebee.Conversion.PyTorchParams do
+                 source_layer_name
+                 when is_binary(source_layer_name) or
+                        is_list(source_layer_name) ->
+-                  default_layer_param_builder(layer, param.name, source_layer_name)
++                  {sources, builder_fun} =
++                    default_layer_param_builder(layer, param.name, source_layer_name)
++
++                  # Only plain matrix multiplications run on quantized weights
++                  keep_quantized? =
++                    layer.op_name in [:dense, :dense_transposed] and param.name == "kernel"
++
++                  {sources, builder_fun, keep_quantized?}
+               end
+ 
+             {all_sources_found?, source_values, source_keys} =
+@@ -151,6 +173,12 @@ defmodule Bumblebee.Conversion.PyTorchParams do
+             {value, diff} =
+               if all_sources_found? do
+                 source_values = Enum.map(source_values, &Nx.to_tensor/1)
++
++                source_values =
++                  if keep_quantized?,
++                    do: source_values,
++                    else: Enum.map(source_values, &MLXQuantization.dequantize/1)
++
+                 value = builder_fun.(Enum.reverse(source_values))
+ 
+                 case verify_param_shape(param_expr, value) do
+@@ -510,8 +538,13 @@ defmodule Bumblebee.Conversion.PyTorchParams do
+   defp ensure_type(param_expr, value) do
+     Utils.Nx.zip_with(param_expr, value, fn expr, tensor ->
+       case {Nx.type(expr), Nx.type(tensor)} do
+-        {type, type} -> tensor
+-        {expected, _actual} -> Nx.as_type(tensor, expected)
++        {type, type} ->
++          tensor
++
++        _ ->
++          if MLXQuantization.quantized?(tensor),
++            do: tensor,
++            else: Nx.as_type(tensor, Nx.type(expr))
+       end
+     end)
+   end
+diff --git a/mix.exs b/mix.exs
+index 5d84035..2557a68 100644
+--- a/mix.exs
++++ b/mix.exs
+@@ -45,7 +45,8 @@ defmodule Bumblebee.MixProject do
+       {:stb_image, "~> 1.0.0", only: :test},
+       {:bypass, "~> 2.1", only: :test},
+       {:ex_doc, "~> 0.28", only: :dev, runtime: false},
+-      {:nx_signal, "~> 0.4.0"}
++      {:nx_signal, "~> 0.4.0"},
++      {:emlx, "~> 0.5", optional: true}
+     ]
+   end
+ 
+diff --git a/test/bumblebee/conversion/mlx_quantization_test.exs b/test/bumblebee/conversion/mlx_quantization_test.exs
+new file mode 100644
+index 0000000..0c1d649
+--- /dev/null
++++ b/test/bumblebee/conversion/mlx_quantization_test.exs
+@@ -0,0 +1,112 @@
++defmodule Bumblebee.Conversion.MLXQuantizationTest do
++  use ExUnit.Case, async: false
++
++  import Bumblebee.TestHelpers
++
++  @moduletag model_test_tags()
++  @moduletag :emlx
++
++  @backend {EMLX.Backend, device: :gpu}
++  @repo_4bit {:hf, "bumblebee-testing/tiny-random-Qwen3ForCausalLM-mlx-4bit"}
++  @repo_8bit {:hf, "bumblebee-testing/tiny-random-Qwen3ForCausalLM-mlx-8bit"}
++
++  defp predict(model, params) do
++    inputs = %{"input_ids" => Nx.tensor([[10, 20, 30, 40, 50, 60, 70, 80]], backend: @backend)}
++
++    model
++    |> Axon.predict(params, inputs, compiler: EMLX)
++    |> Map.fetch!(:logits)
++    |> to_binary_backend()
++  end
++
++  test "keeps dense kernels quantized and dequantizes the embedding table" do
++    assert {:ok, %{params: params}} = Bumblebee.load_model(@repo_4bit, backend: @backend)
++
++    query = params.data["decoder.blocks.0.self_attention.query"]["kernel"]
++    assert EMLX.Quantization.quantized?(query)
++    assert Nx.shape(query) == {32, 512}
++    assert Nx.type(query) == {:s, 4}
++
++    head = params.data["language_modeling_head.output"]["kernel"]
++    assert EMLX.Quantization.quantized?(head)
++    assert Nx.shape(head) == {1024, 32}
++
++    # The checkpoint leaves weights whose input size is not a multiple of the group size unquantized
++    down = params.data["decoder.blocks.0.ffn.output"]["kernel"]
++    refute EMLX.Quantization.quantized?(down)
++    assert Nx.shape(down) == {37, 32}
++
++    embedding = params.data["embedder.token_embedding"]["kernel"]
++    refute EMLX.Quantization.quantized?(embedding)
++
++    # Reference values from mlx.core.dequantize on the same table
++    assert_all_close(
++      to_binary_backend(embedding[[10..12, 1..3]]),
++      Nx.tensor([
++        [-0.0373, -0.0062, -0.0062],
++        [-0.0065, -0.0647, 0.0194],
++        [-0.0265, -0.0106, 0.0159]
++      ])
++    )
++  end
++
++  for {name, repo} <- [{"4-bit", @repo_4bit}, {"8-bit", @repo_8bit}] do
++    test "#{name} quantized kernels compute the same products as their dequantized weights" do
++      assert {:ok, %{params: params}} =
++               Bumblebee.load_model(unquote(Macro.escape(repo)), backend: @backend)
++
++      kernels =
++        for {layer, %{"kernel" => kernel}} <- params.data,
++            EMLX.Quantization.quantized?(kernel),
++            do: {layer, kernel}
++
++      assert length(kernels) == 13
++
++      for {layer, kernel} <- kernels do
++        # The output head contracts the last axis of its kernel, every other layer the first
++        axis = if layer == "language_modeling_head.output", do: 1, else: 0
++        size = elem(Nx.shape(kernel), axis)
++        input = Nx.iota({1, 8, size}, backend: Nx.BinaryBackend) |> Nx.divide(size) |> Nx.sin()
++
++        # The reference runs on the binary backend, because unquantized MLX float32
++        # products of several rows differ from the exact result by up to 7.4e-4
++        dense = kernel |> EMLX.Quantization.dequantize() |> to_binary_backend()
++        expected = Nx.dot(input, [2], dense, [axis])
++
++        product =
++          input |> Nx.backend_copy(@backend) |> Nx.dot([2], kernel, [axis]) |> to_binary_backend()
++
++        assert_all_close(product, expected, atol: 1.0e-5)
++      end
++    end
++  end
++
++  test "logits match mlx-lm" do
++    assert {:ok, %{model: model, params: params}} =
++             Bumblebee.load_model(@repo_4bit, backend: @backend)
++
++    # Reference values from mlx-lm 0.32.2. The tolerance covers MLX's float32
++    # matrix products, which differ from the exact result by up to 7.4e-4.
++    assert_all_close(
++      predict(model, params)[[.., 1..3, 1..3]],
++      Nx.tensor([
++        [[0.1601, 0.0822, -0.0808], [0.1610, -0.0205, -0.0057], [0.2381, -0.0044, -0.0262]]
++      ]),
++      atol: 1.0e-3
++    )
++  end
++
++  test "raises without the EMLX backend" do
++    assert_raise ArgumentError, ~r/loading MLX quantized weights requires the EMLX backend/, fn ->
++      Bumblebee.load_model(@repo_4bit, backend: Nx.BinaryBackend)
++    end
++  end
++
++  test "raises on a quantization mode other than affine" do
++    quantization = %{"group_size" => 32, "bits" => 4, "mode" => "mxfp4"}
++
++    assert_raise ArgumentError, ~r/MLX quantized weights in "mxfp4" mode are not supported/, fn ->
++      Bumblebee.Conversion.MLXQuantization.validate!(quantization, @backend)
++    end
++  end
++end
+diff --git a/test/test_helper.exs b/test/test_helper.exs
+index 27370b0..b412b46 100644
+--- a/test/test_helper.exs
++++ b/test/test_helper.exs
+@@ -26,4 +26,8 @@ if System.fetch_env("BUMBLEBEE_OFFLINE") == :error do
+   IO.puts("To run tests without hitting the network: BUMBLEBEE_OFFLINE=true mix test")
+ end
+ 
+-ExUnit.start(exclude: [:slow] ++ exclude_multi_device)
++# MLX quantized weights run only on EMLX, which needs Apple silicon
++exclude_emlx =
++  if Code.ensure_loaded?(EMLX) and :os.type() == {:unix, :darwin}, do: [], else: [:emlx]
++
++ExUnit.start(exclude: [:slow] ++ exclude_multi_device ++ exclude_emlx)

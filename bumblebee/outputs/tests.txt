@@ -1,0 +1,16 @@
+Running ExUnit with seed: 409728, max_cases: 1
+Excluding tags: [:slow, :multi_device]
+
+
+Bumblebee.Conversion.MLXQuantizationTest [test/bumblebee/conversion/mlx_quantization_test.exs]
+  * test raises on a quantization mode other than affine [L#126]  * test raises on a quantization mode other than affine (1.7ms) [L#126]
+  * test logits match mlx-lm [L#84]  * test logits match mlx-lm (411.3ms) [L#84]
+  * test 4-bit quantized kernels compute the same products as their dequantized weights [L#54]  * test 4-bit quantized kernels compute the same products as their dequantized weights (159.8ms) [L#54]
+  * test Qwen3.5 logits match mlx-lm [L#99]  * test Qwen3.5 logits match mlx-lm (479.8ms) [L#99]
+  * test 8-bit quantized kernels compute the same products as their dequantized weights [L#54]  * test 8-bit quantized kernels compute the same products as their dequantized weights (43.0ms) [L#54]
+  * test keeps dense kernels quantized and dequantizes the embedding table [L#22]  * test keeps dense kernels quantized and dequantizes the embedding table (18.2ms) [L#22]
+  * test raises without the EMLX backend [L#120]  * test raises without the EMLX backend (1.2ms) [L#120]
+
+Finished in 1.1 seconds (0.00s async, 1.1s sync)
+
+Result: 7 passed
