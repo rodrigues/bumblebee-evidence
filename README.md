@@ -38,7 +38,7 @@ The Bumblebee tests check these values on EXLA, within 1.0e-4 of transformers, a
 mlx-lm takes 17 ms per token for the same model in bfloat16 ([`mlx_2b.py`](bumblebee/mlx_2b.py), [`mlx-2b.json`](bumblebee/outputs/mlx-2b.json)).
 
 The tokenizer gives the same ids as transformers for both prompts.
-Qwen3.5-0.8B and 2B load with no missing parameters and no shape mismatches.
+Qwen3.5-0.8B and 2B load with no missing parameters and no shape mismatches, and the only unused tensors are the vision tower's and, in 0.8B, the multi-token prediction layer's ([`params.exs`](bumblebee/params.exs), [`params.txt`](bumblebee/outputs/params.txt)).
 
 The reference disables the end-of-sequence token instead of setting `min_new_tokens`.
 With `min_new_tokens`, transformers masks the end-of-sequence token out of the logits, so its greedy choice differs from the model's argmax wherever that token would win, which happens at the ninth token with thinking off.
@@ -47,6 +47,14 @@ With `min_new_tokens`, transformers masks the end-of-sequence token out of the l
 
 Bumblebee computes the linear attention over a prompt in chunks of 64 tokens, as transformers does.
 [`prefill.exs`](bumblebee/prefill.exs) times one forward pass of Qwen3.5-2B on EMLX in bfloat16 over prompts of 128 to 8192 tokens ([`prefill.json`](bumblebee/outputs/prefill.json)), and [`prefill.py`](bumblebee/prefill.py) times mlx-lm on the same prompts ([`mlx-prefill.json`](bumblebee/outputs/mlx-prefill.json)).
+Each time is one pass after a warm-up pass:
+
+| Prompt tokens | Bumblebee | mlx-lm |
+|---|---|---|
+| 128 | 36 ms | 31 ms |
+| 512 | 99 ms | 78 ms |
+| 2048 | 415 ms | 301 ms |
+| 8192 | 2097 ms | 1298 ms |
 
 ## Qwen3.8-27B
 
@@ -73,6 +81,7 @@ BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_2b
 uv run mlx_2b.py
 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir prefill.exs
 uv run prefill.py
+BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir params.exs
 ```
 
-The 2B scripts read the checkpoints from the Hugging Face cache, so download them first with `hf download`.
+The 2B, prefill and params scripts read the checkpoints from the Hugging Face cache, so download Qwen/Qwen3.5-0.8B and Qwen/Qwen3.5-2B first with `hf download`.

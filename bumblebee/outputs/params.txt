@@ -1,0 +1,22 @@
+## Qwen/Qwen3.5-0.8B
+
+missing: 0
+
+unused: 168
+  - model.visual: 153
+  - mtp.fc: 1
+  - mtp.layers: 11
+  - mtp.norm: 1
+  - mtp.pre_fc_norm_embedding: 1
+  - mtp.pre_fc_norm_hidden: 1
+ignored, because of non-matching shape: 0
+
+
+## Qwen/Qwen3.5-2B
+
+missing: 0
+
+unused: 187
+  - model.visual: 187
+ignored, because of non-matching shape: 0
+
