@@ -5,6 +5,8 @@ This repository backs two changes that let Bumblebee run checkpoints quantized w
 - EMLX: transposing a quantized tensor, and the result type of quantized products, on branch [`checkpoint-quantized`](https://github.com/rodrigues/emlx/tree/checkpoint-quantized) of rodrigues/emlx ([`emlx.patch`](emlx/emlx.patch)).
 - Bumblebee: loading the quantized weights, on branch [`mlx-quantized`](https://github.com/rodrigues/bumblebee/tree/mlx-quantized) of rodrigues/bumblebee ([`bumblebee.patch`](bumblebee/bumblebee.patch)).
 
+The Qwen3.5 checkpoints also need the Qwen3.5 model, from https://github.com/rodrigues/bumblebee-qwen3-5-evidence; branch [`qwen3-8-mlx`](https://github.com/rodrigues/bumblebee/tree/qwen3-8-mlx) has both.
+
 Every result is in an `outputs/` folder, so nothing needs running to read it; [Reproduce](#reproduce), at the end, reruns everything.
 All runs were on macOS (Apple M5 Pro, 64 GiB), with Elixir 1.20.5, OTP 29.1.2 and mlx-lm 0.32.2.
 
@@ -34,6 +36,25 @@ The Bumblebee tests check that every quantized kernel gives the same products as
 The quantized products are within 3.2e-7 of the exact result.
 The reference is computed on the binary backend because EMLX's plain float32 matrix products, with the same kernels dequantized, are off by up to 7.4e-4 once the input has more than one row ([`precision.exs`](bumblebee/precision.exs), [`precision.md`](bumblebee/outputs/precision.md)).
 
+[`tiny_qwen3_5.py`](bumblebee/tiny_qwen3_5.py) converts the tiny multimodal Qwen3.5 checkpoint of the Qwen3.5 evidence to MLX in 4 bits with group size 32, into [`tiny-random-Qwen3_5ForConditionalGeneration-mlx-4bit`](bumblebee/checkpoints/tiny-random-Qwen3_5ForConditionalGeneration-mlx-4bit), and records mlx-lm's logits in [`tiny-qwen3_5-reference.json`](bumblebee/outputs/tiny-qwen3_5-reference.json).
+Bumblebee matches them within 1.0e-3 on EMLX; MLX's float32 matrix products differ from the exact result by up to 7.4e-4, so a tighter tolerance would test MLX rather than Bumblebee.
+
+## Qwen3.8-27B in 4 bits
+
+[`reference_27b.py`](bumblebee/reference_27b.py) decodes 30 tokens greedily with `lmstudio-community/Qwen3.8-27B-MLX-4bit` in mlx-lm, and [`bumblebee_27b.exs`](bumblebee/bumblebee_27b.exs) does the same in Bumblebee on EMLX, in bfloat16 ([`results-27b.md`](bumblebee/outputs/results-27b.md)):
+
+| | Bumblebee | mlx-lm |
+|---|---|---|
+| 30 greedy tokens, thinking on and off | identical | |
+| Top choice at each of the 30 positions, teacher forced | identical | |
+| Memory after generating | 17.05 GB | 15.13 GB after loading |
+| Peak memory while generating | 17.68 GB | 15.52 GB |
+| Time per token, thinking off and on | 99 and 136 ms | 63 and 82 ms |
+
+The tokenizer gives the same ids as mlx-lm.
+It loads in about 2 s with no missing parameters and no shape mismatches, and the only unused tensors are the 187 of the vision tower ([`params_27b.exs`](bumblebee/params_27b.exs), [`params-27b.txt`](bumblebee/outputs/params-27b.txt)).
+Bumblebee uses about 2 GB more than mlx-lm because it dequantizes the embedding table, which MLX only materializes on first use, so memory read right after loading is lower than in use.
+
 ## EMLX
 
 The EMLX quantization tests pass ([`quantization-tests.txt`](emlx/outputs/quantization-tests.txt)), and so do the Bumblebee tests, run against the local checkpoints on a branch that also has Qwen3.5 ([`tests.txt`](bumblebee/outputs/tests.txt)).
@@ -52,10 +73,15 @@ The test that compiles a chain of 20,000 operations on the CPU device runs the C
 cd bumblebee
 uv run reference.py
 uv run tiny.py
+QWEN3_5_EVIDENCE_PATH=path/to/bumblebee-qwen3-5-evidence uv run tiny_qwen3_5.py
 uv run reference_f32.py
 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee.exs
 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_f32.exs
 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir precision.exs
+uv run reference_27b.py
+BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_27b.exs
+BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir params_27b.exs
 ```
 
 The Elixir scripts need macOS on Apple silicon for EMLX, and the bfloat16 checkpoint needs about 10 GB of memory.
+`bumblebee_27b.exs` and `params_27b.exs` need the `qwen3-8-mlx` branch and about 20 GB of memory, and read the checkpoint from the Hugging Face cache, so download it first with `hf download`.
