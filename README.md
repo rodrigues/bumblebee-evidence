@@ -21,6 +21,7 @@ All runs were on macOS (Apple M5 Pro, 64 GiB), with Elixir 1.20.5 and OTP 29.1.2
 | [tiny-random-Qwen3_5ForConditionalGeneration-mlx](bumblebee/checkpoints/tiny-random-Qwen3_5ForConditionalGeneration-mlx) | the same weights in MLX's layout, with the norm shift added to the weights and the convolution kernel axes moved |
 
 The model has four linear attention blocks and one full attention block, fewer linear attention key heads than value heads as in 27B, and rotary embedding on a quarter of each head.
+[`bumblebee.exs`](bumblebee/bumblebee.exs) runs the same checkpoints through Bumblebee on EXLA and compares them in [`results.md`](bumblebee/outputs/results.md): every output is within 1.5e-5 of transformers, 4.1e-6 on the 10-token input, and generation is identical token for token.
 The Bumblebee tests check these values on EXLA, within 1.0e-4 of transformers, and generation is identical token for token ([`tests.sh`](bumblebee/tests.sh), [`tests.txt`](bumblebee/outputs/tests.txt)).
 `tests.sh` runs the test file on the checkpoints here, because the `bumblebee-testing` repositories it names do not exist yet.
 [`reference_long.py`](bumblebee/reference_long.py) records the causal checkpoint's logits for a 150-token input, which spans three chunks of the linear attention, in [`reference-long.json`](bumblebee/outputs/reference-long.json), and the tests check those too.
@@ -75,6 +76,7 @@ cd bumblebee
 uv run reference.py
 uv run tiny_mlx.py
 uv run reference_long.py
+BUMBLEBEE_PATH=path/to/bumblebee elixir bumblebee.exs
 BUMBLEBEE_PATH=path/to/bumblebee ./tests.sh
 uv run reference_2b.py
 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_2b.exs
