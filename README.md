@@ -37,7 +37,9 @@ The quantized products are within 3.2e-7 of the exact result.
 The reference is computed on the binary backend because EMLX's plain float32 matrix products, with the same kernels dequantized, are off by up to 7.4e-4 once the input has more than one row ([`precision.exs`](bumblebee/precision.exs), [`precision.md`](bumblebee/outputs/precision.md)).
 
 [`tiny_qwen3_5.py`](bumblebee/tiny_qwen3_5.py) converts the tiny multimodal Qwen3.5 checkpoint of the Qwen3.5 evidence to MLX in 4 bits with group size 32, into [`tiny-random-Qwen3_5ForConditionalGeneration-mlx-4bit`](bumblebee/checkpoints/tiny-random-Qwen3_5ForConditionalGeneration-mlx-4bit), and records mlx-lm's logits in [`tiny-qwen3_5-reference.json`](bumblebee/outputs/tiny-qwen3_5-reference.json).
-Bumblebee matches them within 1.0e-3 on EMLX; MLX's float32 matrix products differ from the exact result by up to 7.4e-4, so a tighter tolerance would test MLX rather than Bumblebee.
+Each of its 35 quantized kernels gives the same products as its dequantized weights, as for Qwen3.
+Bumblebee's logits match mlx-lm's within 5.0e-3 on EMLX, not 1.0e-3, because MLX's float32 products through the linear attention put them 2.6e-3 from an exact computation with the same weights.
+Bumblebee computes the linear attention over a prompt in chunks, as transformers does, while mlx-lm runs it step by step, so their rounding differs; on the unquantized MLX checkpoint, Bumblebee with the step-by-step computation gave exactly mlx-lm's logits.
 
 ## Qwen3.8-27B in 4 bits
 
@@ -57,7 +59,7 @@ Bumblebee uses about 2 GB more than mlx-lm because it dequantizes the embedding 
 
 ## EMLX
 
-The EMLX quantization tests pass ([`quantization-tests.txt`](emlx/outputs/quantization-tests.txt)), and so do the Bumblebee tests, run against the local checkpoints on a branch that also has Qwen3.5 ([`tests.txt`](bumblebee/outputs/tests.txt)).
+The EMLX quantization tests pass ([`quantization-tests.txt`](emlx/outputs/quantization-tests.txt)), and so do the Bumblebee tests, run against the local checkpoints on branch `qwen3-8-mlx`, which also has Qwen3.5 ([`tests.sh`](bumblebee/tests.sh), [`tests.txt`](bumblebee/outputs/tests.txt)).
 In the full suite, ten tests in attention with sinks, async evaluation, linear algebra and the fused attention cache fail on the base commit as well as on the branch ([`failing-tests-base-and-branch.txt`](emlx/outputs/failing-tests-base-and-branch.txt)).
 The test that compiles a chain of 20,000 operations on the CPU device runs the C++ compiler for over 50 minutes on this machine, so it was left out of that comparison.
 
@@ -65,6 +67,7 @@ The test that compiles a chain of 20,000 operations on the CPU device runs the C
 
 - Quantization modes other than affine, which Bumblebee refuses on load.
 - Linux, where EMLX does not run.
+- The Qwen3.8-27B run with the chunked linear attention; it was recorded on `qwen3-8-mlx` before the chunked computation was added.
 - Quantized weights outside dense layers staying quantized; embedding tables and any weight with a custom loader are dequantized on load.
 
 ## Reproduce
@@ -74,6 +77,7 @@ cd bumblebee
 uv run reference.py
 uv run tiny.py
 QWEN3_5_EVIDENCE_PATH=path/to/bumblebee-qwen3-5-evidence uv run tiny_qwen3_5.py
+BUMBLEBEE_PATH=path/to/bumblebee ./tests.sh
 uv run reference_f32.py
 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee.exs
 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_f32.exs
