@@ -24,6 +24,7 @@ All runs were on macOS (Apple M5 Pro, 64 GiB), with Elixir 1.20.5 and OTP 29.1.2
 The model has four linear attention blocks and one full attention block, fewer linear attention key heads than value heads as in 27B, and rotary embedding on a quarter of each head.
 The Bumblebee tests check these values on EXLA, within 1.0e-4 of transformers, and generation is identical token for token ([`tests.sh`](bumblebee/tests.sh), [`tests.txt`](bumblebee/outputs/tests.txt)).
 `tests.sh` runs the test file on the checkpoints here, because the `bumblebee-testing` repositories it names do not exist yet.
+[`reference_long.py`](bumblebee/reference_long.py) records the causal checkpoint's logits for a 150-token input, which spans three chunks of the linear attention, in [`reference-long.json`](bumblebee/outputs/reference-long.json), and the tests check those too.
 The 4-bit checkpoint matches mlx-lm within 1.0e-3 on EMLX; MLX's float32 matrix products differ from the exact result by up to 7.4e-4, so a tighter tolerance would test MLX rather than Bumblebee.
 
 ## A real checkpoint: Qwen3.5-2B
@@ -43,6 +44,11 @@ Qwen3.5-0.8B and 2B load with no missing parameters and no shape mismatches.
 
 The reference disables the end-of-sequence token instead of setting `min_new_tokens`.
 With `min_new_tokens`, transformers masks the end-of-sequence token out of the logits, so its greedy choice differs from the model's argmax wherever that token would win, which happens at the ninth token with thinking off.
+
+## Prompt time
+
+Bumblebee computes the linear attention over a prompt in chunks of 64 tokens, as transformers does.
+[`prefill.exs`](bumblebee/prefill.exs) times one forward pass of Qwen3.5-2B on EMLX in bfloat16 over prompts of 128 to 8192 tokens ([`prefill.json`](bumblebee/outputs/prefill.json)), and [`prefill.py`](bumblebee/prefill.py) times mlx-lm on the same prompts ([`mlx-prefill.json`](bumblebee/outputs/mlx-prefill.json)).
 
 ## Qwen3.8-27B in 4 bits
 
@@ -75,10 +81,13 @@ The 851 language model tensors of the bfloat16 checkpoint, `Qwen/Qwen3.8-27B`, h
 cd bumblebee
 uv run reference.py
 uv run tiny_mlx.py
+uv run reference_long.py
 BUMBLEBEE_PATH=path/to/bumblebee ./tests.sh
 uv run reference_2b.py
 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_2b.exs
 uv run mlx_2b.py
+BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir prefill.exs
+uv run prefill.py
 uv run reference_27b.py
 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_27b.exs
 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir params_27b.exs
