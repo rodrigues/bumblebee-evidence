@@ -10,18 +10,20 @@ All runs were on macOS (Apple M5 Pro, 64 GiB), with Elixir 1.20.5 and OTP 29.1.2
 
 ## Bumblebee matches transformers
 
-[`reference.py`](bumblebee/reference.py) builds two tiny random checkpoints in [`checkpoints/`](bumblebee/checkpoints) with transformers 5.23.0 and records their outputs in [`reference.json`](bumblebee/outputs/reference.json).
+[`reference.py`](bumblebee/reference.py) builds three tiny random checkpoints in [`checkpoints/`](bumblebee/checkpoints) with transformers 5.23.0 and records their outputs in [`reference.json`](bumblebee/outputs/reference.json).
 [`tiny_mlx.py`](bumblebee/tiny_mlx.py) converts the multimodal one with mlx-lm 0.32.2, unquantized and in 4 bits, and records mlx-lm's outputs in [`tiny-mlx-reference.json`](bumblebee/outputs/tiny-mlx-reference.json).
 
 | Checkpoint | Covers |
 |---|---|
-| [tiny-random-Qwen3_5ForCausalLM](bumblebee/checkpoints/tiny-random-Qwen3_5ForCausalLM) | the `:base` and `:for_causal_language_modeling` architectures, 8 tokens of greedy generation through the cache, and left padding |
+| [tiny-random-Qwen3_5TextModel](bumblebee/checkpoints/tiny-random-Qwen3_5TextModel) | the `:base` architecture, from a checkpoint whose names have no prefix |
+| [tiny-random-Qwen3_5ForCausalLM](bumblebee/checkpoints/tiny-random-Qwen3_5ForCausalLM) | the `:for_causal_language_modeling` architecture, 8 tokens of greedy generation through the cache, and left padding |
 | [tiny-random-Qwen3_5ForConditionalGeneration](bumblebee/checkpoints/tiny-random-Qwen3_5ForConditionalGeneration) | a multimodal checkpoint, with the language model under `model.language_model` |
 | [tiny-random-Qwen3_5ForConditionalGeneration-mlx](bumblebee/checkpoints/tiny-random-Qwen3_5ForConditionalGeneration-mlx) | the same weights in MLX's layout, with the norm shift added to the weights and the convolution kernel axes moved |
 | [tiny-random-Qwen3_5ForConditionalGeneration-mlx-4bit](bumblebee/checkpoints/tiny-random-Qwen3_5ForConditionalGeneration-mlx-4bit) | the same model quantized to 4 bits, which needs both branches |
 
 The model has four linear attention blocks and one full attention block, fewer linear attention key heads than value heads as in 27B, and rotary embedding on a quarter of each head.
-The Bumblebee tests check these values on EXLA, within 1.0e-4 of transformers, and generation is identical token for token ([`tests.txt`](bumblebee/outputs/tests.txt)).
+The Bumblebee tests check these values on EXLA, within 1.0e-4 of transformers, and generation is identical token for token ([`tests.sh`](bumblebee/tests.sh), [`tests.txt`](bumblebee/outputs/tests.txt)).
+`tests.sh` runs the test file on the checkpoints here, because the `bumblebee-testing` repositories it names do not exist yet.
 The 4-bit checkpoint matches mlx-lm within 1.0e-3 on EMLX; MLX's float32 matrix products differ from the exact result by up to 7.4e-4, so a tighter tolerance would test MLX rather than Bumblebee.
 
 ## A real checkpoint: Qwen3.5-2B
@@ -73,6 +75,7 @@ The 851 language model tensors of the bfloat16 checkpoint, `Qwen/Qwen3.8-27B`, h
 cd bumblebee
 uv run reference.py
 uv run tiny_mlx.py
+BUMBLEBEE_PATH=path/to/bumblebee ./tests.sh
 uv run reference_2b.py
 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_2b.exs
 uv run mlx_2b.py

@@ -1,22 +1,25 @@
-Running ExUnit with seed: 817671, max_cases: 1
+To run multi-device tests: XLA_FLAGS=--xla_force_host_platform_device_count=2 mix test
+To run tests without hitting the network: BUMBLEBEE_OFFLINE=true mix test
+Running ExUnit with seed: 479073, max_cases: 1
 Excluding tags: [:slow, :multi_device]
 
 
 Bumblebee.Text.Qwen3Test [test/bumblebee/text/qwen3_test.exs]
-  * test :for_causal_language_modeling [L#32]  * test :for_causal_language_modeling (1061.4ms) [L#32]
-  * test :base [L#8]  * test :base (138.8ms) [L#8]
-  * test :for_sequence_classification [L#56]  * test :for_sequence_classification (203.3ms) [L#56]
+  * test :for_sequence_classification [L#56]  * test :for_sequence_classification (1050.4ms) [L#56]
+  * test :for_causal_language_modeling [L#32]  * test :for_causal_language_modeling (172.0ms) [L#32]
+  * test :base [L#8]  * test :base (298.3ms) [L#8]
 
 Bumblebee.Text.Qwen3_5LocalTest [test/bumblebee/text/qwen3_5_local_test.exs]
-  * test :for_causal_language_modeling from an MLX checkpoint [L#90]  * test :for_causal_language_modeling from an MLX checkpoint (1004.7ms) [L#90]
-  * test :for_causal_language_modeling [L#42]  * test :for_causal_language_modeling (99.0ms) [L#42]
-  * test :base [L#8]  * test :base (93.8ms) [L#8]
-  * test loads generation attributes from the text configuration [L#162]  * test loads generation attributes from the text configuration (1.2ms) [L#162]
-  * test :for_causal_language_modeling from a multimodal checkpoint [L#66]  * test :for_causal_language_modeling from a multimodal checkpoint (98.4ms) [L#66]
-  * test generation with cache [L#117]  * test generation with cache (2100.5ms) [L#117]
-  * test refuses the mixture-of-experts variant [L#173]  * test refuses the mixture-of-experts variant (3.0ms) [L#173]
-  * test left padding gives the same logits as unpadded inputs [L#142]  * test left padding gives the same logits as unpadded inputs (1151.4ms) [L#142]
+  * test :for_causal_language_modeling from an MLX checkpoint [L#88]  * test :for_causal_language_modeling from an MLX checkpoint (1228.1ms) [L#88]
+  * test :for_causal_language_modeling from a multimodal checkpoint [L#64]  * test :for_causal_language_modeling from a multimodal checkpoint (55.9ms) [L#64]
+  * test left padding gives the same logits as unpadded inputs [L#174]  * test left padding gives the same logits as unpadded inputs (2037.5ms) [L#174]
+  * test inputs spanning several chunks of the linear attention [L#140]  * test inputs spanning several chunks of the linear attention (1546.0ms) [L#140]
+  * test generation with cache [L#115]  * test generation with cache (1439.5ms) [L#115]
+  * test loads generation attributes from the text configuration [L#194]  * test loads generation attributes from the text configuration (0.9ms) [L#194]
+  * test :for_causal_language_modeling [L#40]  * test :for_causal_language_modeling (55.7ms) [L#40]
+  * test :base [L#8]  * test :base (52.4ms) [L#8]
+  * test refuses the mixture-of-experts variant [L#205]  * test refuses the mixture-of-experts variant (3.1ms) [L#205]
 
-Finished in 5.9 seconds (0.00s async, 5.9s sync)
+Finished in 7.9 seconds (0.00s async, 7.9s sync)
 
-Result: 11 passed
+Result: 12 passed
