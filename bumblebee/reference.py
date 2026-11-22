@@ -7,7 +7,7 @@
 import json, os, torch
 from transformers import (
     Qwen3_5Config, Qwen3_5TextConfig, Qwen3_5VisionConfig,
-    Qwen3_5ForCausalLM, Qwen3_5ForConditionalGeneration,
+    Qwen3_5TextModel, Qwen3_5ForCausalLM, Qwen3_5ForConditionalGeneration,
 )
 
 out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
@@ -27,7 +27,7 @@ vision_config = Qwen3_5VisionConfig(depth=1, hidden_size=16, intermediate_size=3
 input_ids = torch.tensor([[10, 20, 30, 40, 50, 60, 70, 80, 0, 0]])
 attention_mask = torch.tensor([[1, 1, 1, 1, 1, 1, 1, 1, 0, 0]])
 
-for cls in [Qwen3_5ForCausalLM, Qwen3_5ForConditionalGeneration]:
+for cls in [Qwen3_5TextModel, Qwen3_5ForCausalLM, Qwen3_5ForConditionalGeneration]:
     name = cls.__name__
     if cls is Qwen3_5ForConditionalGeneration:
         config = Qwen3_5Config(text_config=text_config, vision_config=vision_config)
@@ -47,7 +47,10 @@ for cls in [Qwen3_5ForCausalLM, Qwen3_5ForConditionalGeneration]:
     with torch.no_grad():
         o = model(input_ids=input_ids, attention_mask=attention_mask)
     entry = reference[f"tiny-random-{name}"] = {}
-    entry["logits"] = o.logits[0, 1:4, 1:4].tolist()
+    if cls is Qwen3_5TextModel:
+        entry["hidden_state"] = o.last_hidden_state[0, 1:4, 1:4].tolist()
+    else:
+        entry["logits"] = o.logits[0, 1:4, 1:4].tolist()
     if cls is Qwen3_5ForCausalLM:
         with torch.no_grad():
             entry["hidden_state"] = model.model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state[0, 1:4, 1:4].tolist()
