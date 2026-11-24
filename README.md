@@ -34,8 +34,7 @@ Its down projection has 37 inputs, which is not a multiple of the group size, so
 
 The Bumblebee tests check that every quantized kernel gives the same products as its dequantized weights, against an exact computation on `Nx.BinaryBackend`.
 The quantized products are within 3.2e-7 of the exact result, and the plain float32 products with the same kernels dequantized within 1.8e-7 ([`precision.exs`](bumblebee/precision.exs), [`precision.md`](bumblebee/outputs/precision.md)).
-Every MLX script here sets MLX_ENABLE_TF32=0, because MLX computes float32 matrix products in TF32 by default on GPUs with neural accelerators, such as the M5.
-With TF32, the dequantized products are off by up to 7.4e-4 once the input has more than one row, which is why the tests compute their reference on the binary backend.
+Every MLX script here sets MLX_ENABLE_TF32=0 for full float32 matrix products on the M5; with TF32, MLX's default there, the dequantized products are off by up to 7.4e-4, so the tests compute their reference on the binary backend.
 
 The tiny Qwen3 checkpoint sets GELU, while mlx-lm's Qwen3 always uses SiLU, so mlx-lm's logits differ from transformers' and Bumblebee's by about 3.5e-4, and the test against mlx-lm allows 1.0e-3.
 
@@ -59,17 +58,15 @@ With TF32 they are 2.2e-3 apart, so the test against mlx-lm allows 5.0e-3.
 
 With thinking on, the one different top choice is where mlx-lm's own top two logits differ by 0.125, as with Qwen3-4B in bfloat16.
 With TF32 the results are the same.
-An earlier version of the Qwen3.5 model inverted each chunk's triangular system by a series, which lost precision with TF32: it matched mlx-lm's top choice at only 21 and 14 of the 30 positions.
 
 The tokenizer gives the same ids as mlx-lm.
 It loads in 2.0 s with no missing parameters and no shape mismatches, and the only unused tensors are the 187 of the vision tower ([`params_27b.exs`](bumblebee/params_27b.exs), [`params-27b.txt`](bumblebee/outputs/params-27b.txt)).
-Bumblebee uses about 2 GB more than mlx-lm because it dequantizes the embedding table, which MLX only materializes on first use, so memory read right after loading is lower than in use.
+Bumblebee uses about 2 GB more than mlx-lm because it dequantizes the embedding table.
 
 ## EMLX
 
 The EMLX quantization tests pass ([`quantization-tests.txt`](emlx/outputs/quantization-tests.txt)), and so do the Bumblebee tests, run against the local checkpoints on branch `qwen3-8-mlx`, which also has Qwen3.5 ([`tests.sh`](bumblebee/tests.sh), [`tests.txt`](bumblebee/outputs/tests.txt)).
-In the full suite, ten tests in attention with sinks, async evaluation, linear algebra and the fused attention cache fail on the base commit as well as on the branch ([`failing-tests-base-and-branch.txt`](emlx/outputs/failing-tests-base-and-branch.txt)).
-The test that compiles a chain of 20,000 operations on the CPU device runs the C++ compiler for over 50 minutes on this machine, so it was left out of that comparison.
+In the full suite, ten tests in attention with sinks, async evaluation, linear algebra and the fused attention cache fail on the base commit as well as on the branch ([`failing-tests-base-and-branch.txt`](emlx/outputs/failing-tests-base-and-branch.txt)); one test that takes over 50 minutes to compile was left out.
 
 ## Not checked
 
