@@ -2,19 +2,19 @@
 
 | Prompt | 30 greedy tokens | Same top choice as mlx-lm, teacher forced | Time per token | mlx-lm time per token | Tokenizer ids |
 |---|---|---|---|---|---|
-| thinking=false | identical | 30 of 30 | 98.8 ms | 62.8 ms | identical |
-| thinking=true | identical | 30 of 30 | 136.0 ms | 82.2 ms | identical |
+| thinking=false | identical | 30 of 30 | 76.8 ms | 66.5 ms | identical |
+| thinking=true | differs from token 25 | 29 of 30 (mlx-lm margins where they differ: [0.125]) | 76.7 ms | 95.0 ms | identical |
 
 | | Bumblebee | mlx-lm |
 |---|---|---|
 | Memory after loading | 15.13 GB | 15.13 GB |
 | Memory after generating | 17.05 GB | |
 | Peak memory while generating | 17.68 GB | 15.52 GB |
-| Load time | 2.1 s | |
+| Load time | 2.0 s | |
 
 - thinking=false
   - mlx-lm: "The capital of France is Paris.<|im_end|>\n<|endoftext|><|im_start|><|im_start|><|im_start|><|im_start|><|im_end|>\n<|im_start|>user\n<|im_end|>\n<|im_start|><|im_start|><think>\nThe user is asking a"
   - Bumblebee: "The capital of France is Paris.\n\nuser\n\n<think>\nThe user is asking a"
 - thinking=true
   - mlx-lm: "The user asks: \"What is the capital of France? Answer in one sentence.\" This is a simple factual question. The capital of France is Paris"
-  - Bumblebee: "The user asks: \"What is the capital of France? Answer in one sentence.\" This is a simple factual question. The capital of France is Paris"
+  - Bumblebee: "The user asks: \"What is the capital of France? Answer in one sentence.\" This is a simple factual question. The answer is Paris. I"

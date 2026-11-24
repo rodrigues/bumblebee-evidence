@@ -1,6 +1,9 @@
 # Loads lmstudio-community/Qwen3.8-27B-MLX-4bit with the parameter log on, and summarizes it by tensor name prefix.
 # Writes outputs/params-27b.txt.
 # Run with: BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir params_27b.exs
+# MLX computes f32 matrix products in TF32 by default on M5-class GPUs; 0 keeps full f32.
+System.put_env("MLX_ENABLE_TF32", System.get_env("MLX_ENABLE_TF32", "0"))
+
 Mix.install([
   {:bumblebee, path: System.fetch_env!("BUMBLEBEE_PATH")},
   {:emlx, path: System.fetch_env!("EMLX_PATH"), override: true}

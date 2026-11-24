@@ -6,6 +6,10 @@
 # and writes their reference outputs to outputs/tiny-reference.json.
 # Run with: uv run tiny.py
 import json, os, shutil
+
+# MLX computes float32 matrix products in TF32 by default on M5-class GPUs; 0 keeps full float32.
+os.environ.setdefault("MLX_ENABLE_TF32", "0")
+
 import mlx.core as mx
 from mlx_lm import convert, load
 

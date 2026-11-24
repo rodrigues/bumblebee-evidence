@@ -3,19 +3,19 @@ LIBMLX_ENABLE_DEBUG=false
 ==> bumblebee
 To run multi-device tests: XLA_FLAGS=--xla_force_host_platform_device_count=2 mix test
 To run tests without hitting the network: BUMBLEBEE_OFFLINE=true mix test
-Running ExUnit with seed: 42337, max_cases: 1
+Running ExUnit with seed: 740789, max_cases: 1
 Excluding tags: [:slow, :multi_device]
 
 
 Bumblebee.Conversion.MLXQuantizationLocalTest [test/bumblebee/conversion/mlx_quantization_local_test.exs]
-  * test keeps dense kernels quantized and dequantizes the embedding table [L#23]  * test keeps dense kernels quantized and dequantizes the embedding table (121.0ms) [L#23]
-  * test 4-bit quantized kernels compute the same products as their dequantized weights [L#59]  * test 4-bit quantized kernels compute the same products as their dequantized weights (174.3ms) [L#59]
-  * test Qwen3.5 4-bit quantized kernels compute the same products as their dequantized weights [L#59]  * test Qwen3.5 4-bit quantized kernels compute the same products as their dequantized weights (142.8ms) [L#59]
-  * test raises on a quantization mode other than affine [L#130]  * test raises on a quantization mode other than affine (2.8ms) [L#130]
-  * test 8-bit quantized kernels compute the same products as their dequantized weights [L#59]  * test 8-bit quantized kernels compute the same products as their dequantized weights (26.8ms) [L#59]
-  * test logits match mlx-lm [L#89]  * test logits match mlx-lm (34.5ms) [L#89]
-  * test Qwen3.5 logits match mlx-lm [L#104]  * test Qwen3.5 logits match mlx-lm (50.4ms) [L#104]
-  * test raises without the EMLX backend [L#124]  * test raises without the EMLX backend (1.3ms) [L#124]
+  * test Qwen3.5 4-bit quantized kernels compute the same products as their dequantized weights [L#59]  * test Qwen3.5 4-bit quantized kernels compute the same products as their dequantized weights (282.0ms) [L#59]
+  * test Qwen3.5 logits match mlx-lm [L#106]  * test Qwen3.5 logits match mlx-lm (55.6ms) [L#106]
+  * test raises without the EMLX backend [L#126]  * test raises without the EMLX backend (4.4ms) [L#126]
+  * test 4-bit quantized kernels compute the same products as their dequantized weights [L#59]  * test 4-bit quantized kernels compute the same products as their dequantized weights (77.2ms) [L#59]
+  * test raises on a quantization mode other than affine [L#132]  * test raises on a quantization mode other than affine (0.2ms) [L#132]
+  * test keeps dense kernels quantized and dequantizes the embedding table [L#23]  * test keeps dense kernels quantized and dequantizes the embedding table (17.6ms) [L#23]
+  * test logits match mlx-lm [L#90]  * test logits match mlx-lm (22.4ms) [L#90]
+  * test 8-bit quantized kernels compute the same products as their dequantized weights [L#59]  * test 8-bit quantized kernels compute the same products as their dequantized weights (27.0ms) [L#59]
 
 Finished in 0.5 seconds (0.00s async, 0.5s sync)
 

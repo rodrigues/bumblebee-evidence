@@ -6,6 +6,10 @@
 # Writes outputs/reference-f32.json.
 # Run with: uv run reference_f32.py
 import json, os
+
+# MLX computes float32 matrix products in TF32 by default on M5-class GPUs; 0 keeps full float32.
+os.environ.setdefault("MLX_ENABLE_TF32", "0")
+
 import mlx.core as mx
 from mlx_lm import load
 from mlx_lm.generate import generate_step

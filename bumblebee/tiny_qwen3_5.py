@@ -6,6 +6,10 @@
 # and writes its mlx-lm logits to outputs/tiny-qwen3_5-reference.json.
 # Run with: QWEN3_5_EVIDENCE_PATH=path/to/bumblebee-qwen3-5-evidence uv run tiny_qwen3_5.py
 import json, os, shutil
+
+# MLX computes float32 matrix products in TF32 by default on M5-class GPUs; 0 keeps full float32.
+os.environ.setdefault("MLX_ENABLE_TF32", "0")
+
 import mlx.core as mx
 from mlx_lm import convert, load
 

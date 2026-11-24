@@ -1,8 +1,8 @@
 diff --git a/lib/bumblebee.ex b/lib/bumblebee.ex
-index 7d82beb..54289ab 100644
+index d38f787..bae8377 100644
 --- a/lib/bumblebee.ex
 +++ b/lib/bumblebee.ex
-@@ -551,6 +551,24 @@ defmodule Bumblebee do
+@@ -562,6 +562,24 @@ defmodule Bumblebee do
    If you want to use a lower precision for inference, make sure to
    also specify `:type`.
  
@@ -27,7 +27,7 @@ index 7d82beb..54289ab 100644
    ## Options
  
      * `:spec` - the model specification to use when building the model.
-@@ -673,11 +691,13 @@ defmodule Bumblebee do
+@@ -684,11 +702,13 @@ defmodule Bumblebee do
        |> Path.extname()
        |> params_file_loader_fun(opts)
  
@@ -43,7 +43,7 @@ index 7d82beb..54289ab 100644
          ] ++ Keyword.take(opts, [:backend, :log_params_diff])
  
        params = Bumblebee.Conversion.PyTorchParams.load_params!(model, input_template, paths, opts)
-@@ -685,6 +705,20 @@ defmodule Bumblebee do
+@@ -696,6 +716,20 @@ defmodule Bumblebee do
      end
    end
  
@@ -308,7 +308,7 @@ index c17fef8..fbc7b49 100644
      end)
    end
 diff --git a/mix.exs b/mix.exs
-index 5d84035..2557a68 100644
+index 7b92639..26fb3e8 100644
 --- a/mix.exs
 +++ b/mix.exs
 @@ -45,7 +45,8 @@ defmodule Bumblebee.MixProject do
@@ -323,10 +323,10 @@ index 5d84035..2557a68 100644
  
 diff --git a/test/bumblebee/conversion/mlx_quantization_test.exs b/test/bumblebee/conversion/mlx_quantization_test.exs
 new file mode 100644
-index 0000000..0c1d649
+index 0000000..a479153
 --- /dev/null
 +++ b/test/bumblebee/conversion/mlx_quantization_test.exs
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,114 @@
 +defmodule Bumblebee.Conversion.MLXQuantizationTest do
 +  use ExUnit.Case, async: false
 +
@@ -397,8 +397,9 @@ index 0000000..0c1d649
 +        size = elem(Nx.shape(kernel), axis)
 +        input = Nx.iota({1, 8, size}, backend: Nx.BinaryBackend) |> Nx.divide(size) |> Nx.sin()
 +
-+        # The reference runs on the binary backend, because unquantized MLX float32
-+        # products of several rows differ from the exact result by up to 7.4e-4
++        # The reference runs on the binary backend, because MLX computes float32
++        # products of several rows in TF32 by default on GPUs with neural
++        # accelerators, such as the M5, up to 7.4e-4 from the exact result
 +        dense = kernel |> EMLX.Quantization.dequantize() |> to_binary_backend()
 +        expected = Nx.dot(input, [2], dense, [axis])
 +
@@ -414,8 +415,9 @@ index 0000000..0c1d649
 +    assert {:ok, %{model: model, params: params}} =
 +             Bumblebee.load_model(@repo_4bit, backend: @backend)
 +
-+    # Reference values from mlx-lm 0.32.2. The tolerance covers MLX's float32
-+    # matrix products, which differ from the exact result by up to 7.4e-4.
++    # Reference values from mlx-lm 0.32.2 in full float32. The tolerance covers
++    # mlx-lm always using SiLU, while this checkpoint sets GELU, 3.5e-4 apart,
++    # and MLX's default TF32 products on GPUs with neural accelerators
 +    assert_all_close(
 +      predict(model, params)[[.., 1..3, 1..3]],
 +      Nx.tensor([

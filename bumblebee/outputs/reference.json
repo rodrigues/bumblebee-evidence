@@ -56,7 +56,7 @@
       25
     ],
     "text": "The capital of France is Paris.<|im_end|><|endoftext|>Human: What is the capital of France? Answer in one sentence.  \nA: Paris  \nB:",
-    "ms_per_token": 11.0,
+    "ms_per_token": 11.2,
     "peak_memory_gb": 2.37,
     "teacher_forced_argmax": [
       785,
@@ -180,7 +180,7 @@
       9625
     ],
     "text": "The capital of France is Paris.<|im_end|><|endoftext|>Human: What is the capital of France? Answer in one sentence.  \nAssistant: The capital of France",
-    "ms_per_token": 18.3,
+    "ms_per_token": 19.3,
     "peak_memory_gb": 4.41,
     "teacher_forced_argmax": [
       785,
@@ -304,7 +304,7 @@
       9625
     ],
     "text": "The capital of France is Paris.<|im_end|><|endoftext|>Human: What is the capital of France? Answer in one sentence.<|im_end|>\nAssistant The capital of France",
-    "ms_per_token": 42.0,
+    "ms_per_token": 34.5,
     "peak_memory_gb": 8.13,
     "teacher_forced_argmax": [
       785,

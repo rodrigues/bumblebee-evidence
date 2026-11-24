@@ -6,6 +6,10 @@
 # and writes outputs/reference-27b.json with the tokens, the teacher-forced top choices, the speed and the peak memory.
 # Run with: uv run reference_27b.py
 import json, os, time
+
+# MLX computes float32 matrix products in TF32 by default on M5-class GPUs; 0 keeps full float32.
+os.environ.setdefault("MLX_ENABLE_TF32", "0")
+
 import mlx.core as mx
 from mlx_lm import load
 from mlx_lm.generate import generate_step

@@ -2,6 +2,9 @@
 # and compares the tokens and the teacher-forced top choices with mlx-lm.
 # Writes outputs/bumblebee-27b.json and outputs/results-27b.md.
 # Run with: BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_27b.exs
+# MLX computes f32 matrix products in TF32 by default on M5-class GPUs; 0 keeps full f32.
+System.put_env("MLX_ENABLE_TF32", System.get_env("MLX_ENABLE_TF32", "0"))
+
 Mix.install([
   {:bumblebee, path: System.fetch_env!("BUMBLEBEE_PATH")},
   {:emlx, path: System.fetch_env!("EMLX_PATH"), override: true},

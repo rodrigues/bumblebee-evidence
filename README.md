@@ -2,7 +2,7 @@
 
 This repository backs two changes that let Bumblebee run checkpoints quantized with MLX, such as the ones under [mlx-community](https://huggingface.co/mlx-community), on EMLX without dequantizing them:
 
-- EMLX: transposing a quantized tensor, and the result type of quantized products, on branch [`checkpoint-quantized`](https://github.com/rodrigues/emlx/tree/checkpoint-quantized) of rodrigues/emlx ([`emlx.patch`](emlx/emlx.patch)).
+- EMLX: transposing a quantized tensor, and the result type of quantized products, in two commits on elixir-nx/emlx `d5c78ae` ([`emlx.patch`](emlx/emlx.patch)), which also apply cleanly to its current main.
 - Bumblebee: loading the quantized weights, on branch [`mlx-quantized`](https://github.com/rodrigues/bumblebee/tree/mlx-quantized) of rodrigues/bumblebee ([`bumblebee.patch`](bumblebee/bumblebee.patch)).
 
 The Qwen3.5 checkpoints also need the Qwen3.5 model, from https://github.com/rodrigues/bumblebee-qwen3-5-evidence; branch [`qwen3-8-mlx`](https://github.com/rodrigues/bumblebee/tree/qwen3-8-mlx) has both.
@@ -17,9 +17,9 @@ All runs were on macOS (Apple M5 Pro, 64 GiB), with Elixir 1.20.5, OTP 29.1.2 an
 
 | Checkpoint | 30 greedy tokens | Top choices, teacher forced | Memory after generating | Peak memory | mlx-lm peak memory | Time per token | mlx-lm time per token |
 |---|---|---|---|---|---|---|---|
-| mlx-community/Qwen3-4B-Instruct-2507-4bit | follow mlx-lm to token 24 | 29 of 30 | 3.09 GB | 3.26 GB | 2.37 GB | 17.3 ms | 11.0 ms |
-| mlx-community/Qwen3-4B-Instruct-2507-8bit | follow mlx-lm to token 23 | 29 of 30 | 5.10 GB | 5.47 GB | 4.41 GB | 24.6 ms | 18.3 ms |
-| Qwen/Qwen3-4B-Instruct-2507, bfloat16 | follow mlx-lm to token 26 | 29 of 30 | 8.87 GB | 8.92 GB | 8.13 GB | 37.8 ms | 42.0 ms |
+| mlx-community/Qwen3-4B-Instruct-2507-4bit | follow mlx-lm to token 24 | 29 of 30 | 3.09 GB | 3.26 GB | 2.37 GB | 19.7 ms | 11.2 ms |
+| mlx-community/Qwen3-4B-Instruct-2507-8bit | follow mlx-lm to token 23 | 29 of 30 | 5.10 GB | 5.47 GB | 4.41 GB | 32.2 ms | 19.3 ms |
+| Qwen/Qwen3-4B-Instruct-2507, bfloat16 | follow mlx-lm to token 26 | 29 of 30 | 8.87 GB | 8.91 GB | 8.13 GB | 39.3 ms | 34.5 ms |
 
 The tokenizer gives the same ids as mlx-lm.
 Bumblebee uses about 0.7 GB more than mlx-lm with the quantized checkpoints because it dequantizes the embedding table.
@@ -33,13 +33,16 @@ With float32 activations on both sides, [`reference_f32.py`](bumblebee/reference
 Its down projection has 37 inputs, which is not a multiple of the group size, so mlx-lm leaves it unquantized, and the tests check that a checkpoint can mix both.
 
 The Bumblebee tests check that every quantized kernel gives the same products as its dequantized weights, against an exact computation on `Nx.BinaryBackend`.
-The quantized products are within 3.2e-7 of the exact result.
-The reference is computed on the binary backend because EMLX's plain float32 matrix products, with the same kernels dequantized, are off by up to 7.4e-4 once the input has more than one row ([`precision.exs`](bumblebee/precision.exs), [`precision.md`](bumblebee/outputs/precision.md)).
+The quantized products are within 3.2e-7 of the exact result, and the plain float32 products with the same kernels dequantized within 1.8e-7 ([`precision.exs`](bumblebee/precision.exs), [`precision.md`](bumblebee/outputs/precision.md)).
+Every MLX script here sets MLX_ENABLE_TF32=0, because MLX computes float32 matrix products in TF32 by default on GPUs with neural accelerators, such as the M5.
+With TF32, the dequantized products are off by up to 7.4e-4 once the input has more than one row, which is why the tests compute their reference on the binary backend.
+
+The tiny Qwen3 checkpoint sets GELU, while mlx-lm's Qwen3 always uses SiLU, so mlx-lm's logits differ from transformers' and Bumblebee's by about 3.5e-4, and the test against mlx-lm allows 1.0e-3.
 
 [`tiny_qwen3_5.py`](bumblebee/tiny_qwen3_5.py) converts the tiny multimodal Qwen3.5 checkpoint of the Qwen3.5 evidence to MLX in 4 bits with group size 32, into [`tiny-random-Qwen3_5ForConditionalGeneration-mlx-4bit`](bumblebee/checkpoints/tiny-random-Qwen3_5ForConditionalGeneration-mlx-4bit), and records mlx-lm's logits in [`tiny-qwen3_5-reference.json`](bumblebee/outputs/tiny-qwen3_5-reference.json).
 Each of its 35 quantized kernels gives the same products as its dequantized weights, as for Qwen3.
-Bumblebee's logits match mlx-lm's within 5.0e-3 on EMLX, not 1.0e-3, because MLX's float32 products through the linear attention put them 2.6e-3 from an exact computation with the same weights.
-Bumblebee computes the linear attention over a prompt in chunks, as transformers does, while mlx-lm runs it step by step, so their rounding differs; on the unquantized MLX checkpoint, Bumblebee with the step-by-step computation gave exactly mlx-lm's logits.
+Bumblebee's logits match mlx-lm's within 1.1e-6 in full float32.
+With TF32 they are 2.2e-3 apart, so the test against mlx-lm allows 5.0e-3.
 
 ## Qwen3.8-27B in 4 bits
 
@@ -47,14 +50,19 @@ Bumblebee computes the linear attention over a prompt in chunks, as transformers
 
 | | Bumblebee | mlx-lm |
 |---|---|---|
-| 30 greedy tokens, thinking on and off | identical | |
-| Top choice at each of the 30 positions, teacher forced | identical | |
+| 30 greedy tokens, thinking off | identical | |
+| 30 greedy tokens, thinking on | follow mlx-lm to token 25 | |
+| Top choice at each of the 30 positions, teacher forced, thinking off and on | 30 and 29 of 30 | |
 | Memory after generating | 17.05 GB | 15.13 GB after loading |
 | Peak memory while generating | 17.68 GB | 15.52 GB |
-| Time per token, thinking off and on | 99 and 136 ms | 63 and 82 ms |
+| Time per token, thinking off and on | 77 and 77 ms | 67 and 95 ms |
+
+With thinking on, the one different top choice is where mlx-lm's own top two logits differ by 0.125, as with Qwen3-4B in bfloat16.
+With TF32 the results are the same.
+An earlier version of the Qwen3.5 model inverted each chunk's triangular system by a series, which lost precision with TF32: it matched mlx-lm's top choice at only 21 and 14 of the 30 positions.
 
 The tokenizer gives the same ids as mlx-lm.
-It loads in about 2 s with no missing parameters and no shape mismatches, and the only unused tensors are the 187 of the vision tower ([`params_27b.exs`](bumblebee/params_27b.exs), [`params-27b.txt`](bumblebee/outputs/params-27b.txt)).
+It loads in 2.0 s with no missing parameters and no shape mismatches, and the only unused tensors are the 187 of the vision tower ([`params_27b.exs`](bumblebee/params_27b.exs), [`params-27b.txt`](bumblebee/outputs/params-27b.txt)).
 Bumblebee uses about 2 GB more than mlx-lm because it dequantizes the embedding table, which MLX only materializes on first use, so memory read right after loading is lower than in use.
 
 ## EMLX
@@ -67,7 +75,6 @@ The test that compiles a chain of 20,000 operations on the CPU device runs the C
 
 - Quantization modes other than affine, which Bumblebee refuses on load.
 - Linux, where EMLX does not run.
-- The Qwen3.8-27B run with the chunked linear attention; it was recorded on `qwen3-8-mlx` before the chunked computation was added.
 - Quantized weights outside dense layers staying quantized; embedding tables and any weight with a custom loader are dequantized on load.
 
 ## Reproduce

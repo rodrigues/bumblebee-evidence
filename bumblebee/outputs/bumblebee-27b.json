@@ -1,5 +1,5 @@
 {
-  "load_seconds": 2.1,
+  "load_seconds": 2.0,
   "memory_after_generating_gb": 17.05,
   "memory_after_loading_gb": 15.13,
   "peak_memory_gb": 17.68,
@@ -37,7 +37,7 @@
         9859,
         264
       ],
-      "ms_per_token": 98.8,
+      "ms_per_token": 76.8,
       "teacher_forced_argmax": [
         760,
         6511,
@@ -125,13 +125,13 @@
         3296,
         13,
         561,
-        6511,
-        314,
-        9338,
+        4087,
         369,
-        11751
+        11751,
+        13,
+        353
       ],
-      "ms_per_token": 136.0,
+      "ms_per_token": 76.7,
       "teacher_forced_argmax": [
         760,
         1156,
@@ -158,13 +158,13 @@
         3296,
         13,
         561,
-        6511,
+        4087,
         314,
         9338,
         369,
         11751
       ],
-      "text": "The user asks: \"What is the capital of France? Answer in one sentence.\" This is a simple factual question. The capital of France is Paris",
+      "text": "The user asks: \"What is the capital of France? Answer in one sentence.\" This is a simple factual question. The answer is Paris. I",
       "tokenizer_input_ids": [
         248045,
         8678,

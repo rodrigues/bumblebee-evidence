@@ -102,7 +102,7 @@
       11751
     ],
     "text": "The user asks: \"What is the capital of France? Answer in one sentence.\" This is a simple factual question. The capital of France is Paris",
-    "ms_per_token": 82.2,
+    "ms_per_token": 95.0,
     "peak_memory_gb": 15.52,
     "teacher_forced_argmax": [
       760,
@@ -230,7 +230,7 @@
       264
     ],
     "text": "The capital of France is Paris.<|im_end|>\n<|endoftext|><|im_start|><|im_start|><|im_start|><|im_start|><|im_end|>\n<|im_start|>user\n<|im_end|>\n<|im_start|><|im_start|><think>\nThe user is asking a",
-    "ms_per_token": 62.8,
+    "ms_per_token": 66.5,
     "peak_memory_gb": 15.52,
     "teacher_forced_argmax": [
       760,

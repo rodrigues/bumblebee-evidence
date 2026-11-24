@@ -1,6 +1,9 @@
 # Same as bumblebee.exs, with float32 activations instead of bfloat16, against outputs/reference-f32.json.
 # Writes outputs/results-f32.md.
 # Run with: BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_f32.exs
+# MLX computes f32 matrix products in TF32 by default on M5-class GPUs; 0 keeps full f32.
+System.put_env("MLX_ENABLE_TF32", System.get_env("MLX_ENABLE_TF32", "0"))
+
 Mix.install([
   {:bumblebee, path: System.fetch_env!("BUMBLEBEE_PATH")},
   {:emlx, path: System.fetch_env!("EMLX_PATH"), override: true},
