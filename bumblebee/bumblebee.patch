@@ -1,8 +1,8 @@
 diff --git a/lib/bumblebee.ex b/lib/bumblebee.ex
-index 7d82beb..949fe5a 100644
+index d38f787..46fd7d6 100644
 --- a/lib/bumblebee.ex
 +++ b/lib/bumblebee.ex
-@@ -204,6 +204,9 @@ defmodule Bumblebee do
+@@ -211,6 +211,9 @@ defmodule Bumblebee do
      "Qwen3Model" => {Bumblebee.Text.Qwen3, :base},
      "Qwen3ForCausalLM" => {Bumblebee.Text.Qwen3, :for_causal_language_modeling},
      "Qwen3ForSequenceClassification" => {Bumblebee.Text.Qwen3, :for_sequence_classification},
@@ -12,7 +12,7 @@ index 7d82beb..949fe5a 100644
      "ResNetForImageClassification" => {Bumblebee.Vision.ResNet, :for_image_classification},
      "ResNetModel" => {Bumblebee.Vision.ResNet, :base},
      "RobertaForMaskedLM" => {Bumblebee.Text.Roberta, :for_masked_language_modeling},
-@@ -291,6 +294,8 @@ defmodule Bumblebee do
+@@ -302,6 +305,8 @@ defmodule Bumblebee do
      "phi" => :code_gen,
      "phi3" => :llama,
      "qwen3" => :qwen2,
@@ -35,10 +35,10 @@ index d7a6a9a..281cb53 100644
  
 diff --git a/lib/bumblebee/text/qwen3_5.ex b/lib/bumblebee/text/qwen3_5.ex
 new file mode 100644
-index 0000000..90e25f5
+index 0000000..40ba26d
 --- /dev/null
 +++ b/lib/bumblebee/text/qwen3_5.ex
-@@ -0,0 +1,1042 @@
+@@ -0,0 +1,1040 @@
 +defmodule Bumblebee.Text.Qwen3_5 do
 +  alias Bumblebee.Shared
 +
@@ -71,11 +71,11 @@ index 0000000..90e25f5
 +        default: 24,
 +        doc: "the number of blocks in the model"
 +      ],
-+      block_types: [
++      layer_types: [
 +        default: nil,
 +        doc: """
-+        the type of each block, either `:linear_attention` or `:full_attention`.
-+        Defaults to `:full_attention` for every fourth block and `:linear_attention`
++        the type of each layer, either `:linear_attention` or `:full_attention`.
++        Defaults to `:full_attention` for every fourth layer and `:linear_attention`
 +        for the others
 +        """
 +      ],
@@ -220,18 +220,18 @@ index 0000000..90e25f5
 +  def config(spec, opts) do
 +    spec = Shared.put_config_attrs(spec, opts)
 +
-+    block_types =
-+      spec.block_types ||
++    layer_types =
++      spec.layer_types ||
 +        for index <- 0..(spec.num_blocks - 1) do
 +          if rem(index + 1, 4) == 0, do: :full_attention, else: :linear_attention
 +        end
 +
-+    if length(block_types) != spec.num_blocks do
++    if length(layer_types) != spec.num_blocks do
 +      raise ArgumentError,
-+            "expected :block_types to have #{spec.num_blocks} entries, got: #{length(block_types)}"
++            "expected :layer_types to have #{spec.num_blocks} entries, got: #{length(layer_types)}"
 +    end
 +
-+    %{spec | block_types: block_types}
++    %{spec | layer_types: layer_types}
 +  end
 +
 +  @impl true
@@ -272,7 +272,7 @@ index 0000000..90e25f5
 +    blocks =
 +      cache.blocks
 +      |> Tuple.to_list()
-+      |> Enum.zip_with(spec.block_types, fn
++      |> Enum.zip_with(spec.layer_types, fn
 +        block, :full_attention -> block
 +        block, :linear_attention -> %{block | self_attention: linear_attention}
 +      end)
@@ -370,7 +370,7 @@ index 0000000..90e25f5
 +        normalized = rms_norm(hidden_state, spec, name: join(name, "self_attention_norm"))
 +
 +        {hidden_state, attention, self_attention_cache} =
-+          case Enum.fetch!(spec.block_types, block.index) do
++          case Enum.fetch!(spec.layer_types, block.index) do
 +            :full_attention ->
 +              gated_attention(normalized, position_ids, block, spec,
 +                name: join(name, "self_attention")
@@ -937,18 +937,16 @@ index 0000000..90e25f5
 +  end
 +
 +  defimpl Bumblebee.HuggingFace.Transformers.Config do
++    def load(spec, %{"model_type" => "qwen3_5", "text_config" => %{} = text_config} = data) do
++      # The multimodal config controls whether the output head is tied.
++      text_config =
++        Map.put(text_config, "tie_word_embeddings", Map.get(data, "tie_word_embeddings", false))
++
++      load(spec, text_config)
++    end
++
 +    def load(spec, data) do
 +      import Shared.Converters
-+
-+      # Multimodal checkpoints nest the language model configuration
-+      data =
-+        case data do
-+          %{"text_config" => text_data} ->
-+            Map.put_new(text_data, "tie_word_embeddings", data["tie_word_embeddings"])
-+
-+          data ->
-+            data
-+        end
 +
 +      # Qwen3.5 configurations set unused token ids to null
 +      data =
@@ -963,7 +961,7 @@ index 0000000..90e25f5
 +          max_positions: {"max_position_embeddings", number()},
 +          hidden_size: {"hidden_size", number()},
 +          num_blocks: {"num_hidden_layers", number()},
-+          block_types:
++          layer_types:
 +            {"layer_types",
 +             list(
 +               mapping(%{
@@ -1082,23 +1080,23 @@ index 0000000..90e25f5
 +  end
 +end
 diff --git a/mix.exs b/mix.exs
-index 5d84035..ae61bde 100644
+index 7b92639..361b2e3 100644
 --- a/mix.exs
 +++ b/mix.exs
-@@ -106,6 +106,7 @@ defmodule Bumblebee.MixProject do
+@@ -108,6 +108,7 @@ defmodule Bumblebee.MixProject do
            Bumblebee.Text.Phi,
            Bumblebee.Text.Phi3,
            Bumblebee.Text.Qwen3,
 +          Bumblebee.Text.Qwen3_5,
            Bumblebee.Text.Roberta,
+           Bumblebee.Text.SigLipText,
            Bumblebee.Text.SmolLm3,
-           Bumblebee.Text.T5,
 diff --git a/test/bumblebee/text/qwen3_5_test.exs b/test/bumblebee/text/qwen3_5_test.exs
 new file mode 100644
-index 0000000..e44223d
+index 0000000..2bc2aeb
 --- /dev/null
 +++ b/test/bumblebee/text/qwen3_5_test.exs
-@@ -0,0 +1,218 @@
+@@ -0,0 +1,238 @@
 +defmodule Bumblebee.Text.Qwen3_5Test do
 +  use ExUnit.Case, async: false
 +
@@ -1112,7 +1110,7 @@ index 0000000..e44223d
 +
 +    assert %Bumblebee.Text.Qwen3_5{architecture: :base} = spec
 +
-+    assert spec.block_types == [
++    assert spec.layer_types == [
 +             :linear_attention,
 +             :linear_attention,
 +             :linear_attention,
@@ -1301,6 +1299,26 @@ index 0000000..e44223d
 +      Bumblebee.HuggingFace.Transformers.Config.load(%Bumblebee.Text.GenerationConfig{}, data)
 +
 +    assert config.eos_token_id == 248_044
++  end
++
++  test "uses the multimodal config to decide whether to tie output weights" do
++    for {outer, expected} <- [{%{"tie_word_embeddings" => false}, false}, {%{}, false}] do
++      data =
++        Map.merge(
++          %{
++            "model_type" => "qwen3_5",
++            "text_config" => %{
++              "model_type" => "qwen3_5_text",
++              "hidden_size" => 32,
++              "tie_word_embeddings" => true
++            }
++          },
++          outer
++        )
++
++      assert %Bumblebee.Text.Qwen3_5{hidden_size: 32, tie_word_embeddings: ^expected} =
++               Bumblebee.HuggingFace.Transformers.Config.load(%Bumblebee.Text.Qwen3_5{}, data)
++    end
 +  end
 +
 +  test "refuses the mixture-of-experts variant" do

@@ -32,11 +32,12 @@ The Bumblebee tests check these values on EXLA, within 1.0e-4 of transformers, a
 
 | Run | Thinking on | Thinking off | Time per token |
 |---|---|---|---|
-| EXLA, CPU, float32 | identical | identical | 57 ms |
-| EMLX, GPU, float32 | identical | identical | 39 ms |
-| EMLX, GPU, bfloat16 | identical | identical | 27 ms |
+| EXLA, CPU, float32 | identical | identical | 63 ms |
+| EMLX, GPU, float32 | identical | identical | 34 ms |
+| EMLX, GPU, bfloat16 | identical | identical | 20 ms |
 
 mlx-lm takes 17 ms per token for the same model in bfloat16 ([`mlx_2b.py`](bumblebee/mlx_2b.py), [`mlx-2b.json`](bumblebee/outputs/mlx-2b.json)).
+The EMLX runs set MLX_ENABLE_TF32=0, because MLX computes float32 matrix products in TF32 by default on the M5, and with TF32 the thinking-on prompt picks a different first token than transformers in both float32 and bfloat16.
 
 The tokenizer gives the same ids as transformers for both prompts.
 Qwen3.5-0.8B and 2B load with no missing parameters and no shape mismatches, and the only unused tensors are the vision tower's and, in 0.8B, the multi-token prediction layer's ([`params.exs`](bumblebee/params.exs), [`params.txt`](bumblebee/outputs/params.txt)).
@@ -52,10 +53,10 @@ Each time is one pass after a warm-up pass:
 
 | Prompt tokens | Bumblebee | mlx-lm |
 |---|---|---|
-| 128 | 36 ms | 31 ms |
-| 512 | 99 ms | 78 ms |
-| 2048 | 415 ms | 301 ms |
-| 8192 | 2097 ms | 1298 ms |
+| 128 | 38 ms | 31 ms |
+| 512 | 101 ms | 78 ms |
+| 2048 | 424 ms | 301 ms |
+| 8192 | 2011 ms | 1298 ms |
 
 ## Qwen3.8-27B
 

@@ -2,6 +2,9 @@
 # Runs in float32 on EXLA for parity, and on EMLX for the time per token on Apple silicon.
 # Writes outputs/bumblebee-2b.json and outputs/results-2b.md.
 # Run with: BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_2b.exs
+# MLX computes f32 matrix products in TF32 by default on M5-class GPUs; 0 keeps full f32.
+System.put_env("MLX_ENABLE_TF32", System.get_env("MLX_ENABLE_TF32", "0"))
+
 Mix.install([
   {:bumblebee, path: System.fetch_env!("BUMBLEBEE_PATH")},
   {:exla, "1.0.0"},
