@@ -35,10 +35,10 @@ index d7a6a9a..281cb53 100644
  
 diff --git a/lib/bumblebee/text/qwen3_5.ex b/lib/bumblebee/text/qwen3_5.ex
 new file mode 100644
-index 0000000..40ba26d
+index 0000000..e081f35
 --- /dev/null
 +++ b/lib/bumblebee/text/qwen3_5.ex
-@@ -0,0 +1,1040 @@
+@@ -0,0 +1,1035 @@
 +defmodule Bumblebee.Text.Qwen3_5 do
 +  alias Bumblebee.Shared
 +
@@ -773,11 +773,29 @@ index 0000000..40ba26d
 +
 +    system = Nx.dot(key_beta, [4], [0, 1, 2], key, [4], [0, 1, 2]) * pairwise_decay
 +    intra_chunk = Nx.dot(query, [4], [0, 1, 2], key, [4], [0, 1, 2]) * pairwise_decay
-+    inverse = unit_lower_triangular_inverse(system)
 +
-+    new_values = Nx.dot(inverse, [4], [0, 1, 2], value_beta, [3], [0, 1, 2])
++    strictly_lower =
++      Nx.greater(
++        Nx.iota({@chunk_size, @chunk_size}, axis: 0),
++        Nx.iota({@chunk_size, @chunk_size}, axis: 1)
++      )
++
++    unit_lower =
++      Nx.select(Nx.broadcast(strictly_lower, system), system, 0.0) + Nx.eye(@chunk_size)
++
 +    decayed_key_beta = key_beta * Nx.new_axis(Nx.exp(cumulative_decay), -1)
-+    key_cumulative_decay = Nx.dot(inverse, [4], [0, 1, 2], decayed_key_beta, [3], [0, 1, 2])
++
++    solution =
++      Nx.LinAlg.triangular_solve(
++        unit_lower,
++        Nx.concatenate([value_beta, decayed_key_beta], axis: 4),
++        lower: true
++      )
++
++    new_values = Nx.slice_along_axis(solution, 0, value_head_size, axis: 4)
++
++    key_cumulative_decay =
++      Nx.slice_along_axis(solution, value_head_size, Nx.axis_size(decayed_key_beta, 4), axis: 4)
 +
 +    last_decay = Nx.slice_along_axis(cumulative_decay, @chunk_size - 1, 1, axis: 3)
 +    query = query * Nx.new_axis(Nx.exp(cumulative_decay), -1)
@@ -855,29 +873,6 @@ index 0000000..40ba26d
 +      end)
 +
 +    {Nx.stack(outputs, axis: 2), state}
-+  end
-+
-+  # The inverse of the identity plus the strictly lower part L of each
-+  # matrix. L is nilpotent, so the inverse is the finite series
-+  # I - L + L^2 - ..., computed as (I - L)(I + L^2)(I + L^4)...
-+  deftransformp unit_lower_triangular_inverse(system) do
-+    size = Nx.axis_size(system, -1)
-+    strictly_lower = Nx.greater(Nx.iota({size, size}, axis: 0), Nx.iota({size, size}, axis: 1))
-+    power = Nx.negate(Nx.select(Nx.broadcast(strictly_lower, system), system, 0.0))
-+    identity = Nx.eye(size)
-+    steps = ceil(:math.log2(size)) - 1
-+
-+    {inverse, _power} =
-+      Enum.reduce(1..steps, {Nx.add(identity, power), power}, fn _, {inverse, power} ->
-+        power = batched_matmul(power, power)
-+        {batched_matmul(inverse, Nx.add(identity, power)), power}
-+      end)
-+
-+    inverse
-+  end
-+
-+  deftransformp batched_matmul(left, right) do
-+    Nx.dot(left, [4], [0, 1, 2], right, [3], [0, 1, 2])
 +  end
 +
 +  defnp normalize_query_key(query, key) do
@@ -1093,10 +1088,10 @@ index 7b92639..361b2e3 100644
            Bumblebee.Text.SmolLm3,
 diff --git a/test/bumblebee/text/qwen3_5_test.exs b/test/bumblebee/text/qwen3_5_test.exs
 new file mode 100644
-index 0000000..2bc2aeb
+index 0000000..f39bcc8
 --- /dev/null
 +++ b/test/bumblebee/text/qwen3_5_test.exs
-@@ -0,0 +1,238 @@
+@@ -0,0 +1,268 @@
 +defmodule Bumblebee.Text.Qwen3_5Test do
 +  use ExUnit.Case, async: false
 +
@@ -1265,6 +1260,36 @@ index 0000000..2bc2aeb
 +        [-1.3670, -0.1720, 0.6075],
 +        [-1.4485, -2.4142, 0.4497],
 +        [0.1250, -1.4308, 0.4002]
++      ]),
++      atol: 1.0e-4
++    )
++  end
++
++  test "a repeated token spanning several chunks of the linear attention" do
++    assert {:ok, %{model: model, params: params}} =
++             Bumblebee.load_model({:hf, "bumblebee-testing/tiny-random-Qwen3_5ForCausalLM"})
++
++    # Identical keys with a slow decay make the triangular system of each
++    # chunk the hardest to solve accurately
++    params =
++      update_in(params.data, fn data ->
++        Map.new(data, fn
++          {"decoder.blocks." <> _ = name, %{"a_log" => a_log} = layer} ->
++            {name, %{layer | "a_log" => Nx.fill(a_log, -4.0)}}
++
++          entry ->
++            entry
++        end)
++      end)
++
++    outputs = Axon.predict(model, params, %{"input_ids" => Nx.broadcast(10, {1, 150})})
++
++    assert_all_close(
++      Nx.take(outputs.logits[[0, .., 1..3]], Nx.tensor([63, 64, 149])),
++      Nx.tensor([
++        [1.5815, -0.3145, 0.3124],
++        [1.5767, -0.3005, 0.2543],
++        [1.6945, 0.4724, -0.1081]
 +      ]),
 +      atol: 1.0e-4
 +    )

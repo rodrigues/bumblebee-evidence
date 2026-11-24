@@ -82,10 +82,15 @@ params =
 long_input_ids = Nx.iota({1, 150}) |> Nx.multiply(7) |> Nx.remainder(1000) |> Nx.add(1)
 long_logits = Axon.predict(model, params, %{"input_ids" => long_input_ids}).logits
 long_result = Nx.take(long_logits[[0, .., 1..3]], Nx.tensor([63, 64, 149])) |> Nx.to_list()
+repeated_logits = Axon.predict(model, params, %{"input_ids" => Nx.broadcast(10, {1, 150})}).logits
+repeated_result = Nx.take(repeated_logits[[0, .., 1..3]], Nx.tensor([63, 64, 149])) |> Nx.to_list()
 
 File.write!(
   Path.join(dir, "outputs/bumblebee.json"),
-  Jason.encode!(Map.put(results, "tiny-random-Qwen3_5ForCausalLM 150 tokens", %{"logits" => long_result}), pretty: true)
+  results
+  |> Map.put("tiny-random-Qwen3_5ForCausalLM 150 tokens", %{"logits" => long_result})
+  |> Map.put("tiny-random-Qwen3_5ForCausalLM 150 repeated tokens", %{"logits" => repeated_result})
+  |> Jason.encode!(pretty: true)
 )
 
 max_difference = fn expected, actual ->
@@ -113,6 +118,7 @@ rows =
   end
 
 long_row = row.("tiny-random-Qwen3_5ForCausalLM", "logits, 150 tokens", long_reference["logits"], long_result)
+repeated_row = row.("tiny-random-Qwen3_5ForCausalLM", "logits, 150 repeated tokens", long_reference["repeated"]["logits"], repeated_result)
 
 report =
   """
@@ -120,7 +126,7 @@ report =
 
   | Checkpoint | Output | Result | Detail |
   |---|---|---|---|
-  #{Enum.join(rows ++ [long_row], "\n")}
+  #{Enum.join(rows ++ [long_row, repeated_row], "\n")}
   """
 
 File.write!(Path.join(dir, "outputs/results.md"), report)

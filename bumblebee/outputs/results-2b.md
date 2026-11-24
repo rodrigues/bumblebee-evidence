@@ -2,12 +2,12 @@
 
 | Run | Prompt | 30 greedy tokens against transformers f32 | Time per token |
 |---|---|---|---|
-| EXLA, CPU, f32 | thinking=false | identical | 62.8 ms |
-| EXLA, CPU, f32 | thinking=true | identical | 62.9 ms |
-| EMLX, GPU, f32 | thinking=false | identical | 33.3 ms |
-| EMLX, GPU, f32 | thinking=true | identical | 34.1 ms |
-| EMLX, GPU, bf16 | thinking=false | identical | 19.4 ms |
-| EMLX, GPU, bf16 | thinking=true | identical | 20.6 ms |
+| EXLA, CPU, f32 | thinking=false | identical | 56.9 ms |
+| EXLA, CPU, f32 | thinking=true | identical | 57.5 ms |
+| EMLX, GPU, f32 | thinking=false | identical | 31.5 ms |
+| EMLX, GPU, f32 | thinking=true | identical | 31.7 ms |
+| EMLX, GPU, bf16 | thinking=false | identical | 19.6 ms |
+| EMLX, GPU, bf16 | thinking=true | identical | 19.8 ms |
 
 - thinking=false: tokenizer ids identical
 - thinking=true: tokenizer ids identical

@@ -21,10 +21,12 @@ All runs were on macOS (Apple M5 Pro, 64 GiB), with Elixir 1.20.5 and OTP 29.1.2
 | [tiny-random-Qwen3_5ForConditionalGeneration-mlx](bumblebee/checkpoints/tiny-random-Qwen3_5ForConditionalGeneration-mlx) | the same weights in MLX's layout, with the norm shift added to the weights and the convolution kernel axes moved |
 
 The model has four linear attention blocks and one full attention block, fewer linear attention key heads than value heads as in 27B, and rotary embedding on a quarter of each head.
-[`bumblebee.exs`](bumblebee/bumblebee.exs) runs the same checkpoints through Bumblebee on EXLA and compares them in [`results.md`](bumblebee/outputs/results.md): every output is within 1.5e-5 of transformers, 4.1e-6 on the 10-token input, and generation is identical token for token.
+[`bumblebee.exs`](bumblebee/bumblebee.exs) runs the same checkpoints through Bumblebee on EXLA and compares them in [`results.md`](bumblebee/outputs/results.md): every output is within 5.7e-6 of transformers, and generation is identical token for token.
 The Bumblebee tests check these values on EXLA, within 1.0e-4 of transformers, and generation is identical token for token ([`tests.sh`](bumblebee/tests.sh), [`tests.txt`](bumblebee/outputs/tests.txt)).
 `tests.sh` runs the test file on the checkpoints here, because the `bumblebee-testing` repositories it names do not exist yet.
-[`reference_long.py`](bumblebee/reference_long.py) records the causal checkpoint's logits for a 150-token input, which spans three chunks of the linear attention, in [`reference-long.json`](bumblebee/outputs/reference-long.json), and the tests check those too.
+[`reference_long.py`](bumblebee/reference_long.py) records the causal checkpoint's logits for two 150-token inputs, which span three chunks of the linear attention, in [`reference-long.json`](bumblebee/outputs/reference-long.json), and the tests check those too.
+The second input repeats one token, so the keys within each chunk are identical.
+That is the hardest case for the triangular system Bumblebee solves in each chunk: an earlier version inverted it by a series, which put these logits 3.2 from transformers on EXLA in float32.
 
 ## A real checkpoint: Qwen3.5-2B
 
@@ -32,12 +34,13 @@ The Bumblebee tests check these values on EXLA, within 1.0e-4 of transformers, a
 
 | Run | Thinking on | Thinking off | Time per token |
 |---|---|---|---|
-| EXLA, CPU, float32 | identical | identical | 63 ms |
-| EMLX, GPU, float32 | identical | identical | 34 ms |
+| EXLA, CPU, float32 | identical | identical | 57 ms |
+| EMLX, GPU, float32 | identical | identical | 32 ms |
 | EMLX, GPU, bfloat16 | identical | identical | 20 ms |
 
 mlx-lm takes 17 ms per token for the same model in bfloat16 ([`mlx_2b.py`](bumblebee/mlx_2b.py), [`mlx-2b.json`](bumblebee/outputs/mlx-2b.json)).
-The EMLX runs set MLX_ENABLE_TF32=0, because MLX computes float32 matrix products in TF32 by default on the M5, and with TF32 the thinking-on prompt picks a different first token than transformers in both float32 and bfloat16.
+The EMLX runs set MLX_ENABLE_TF32=0, because MLX computes float32 matrix products in TF32 by default on the M5.
+With TF32 the results are the same, all identical ([`results-2b-tf32.md`](bumblebee/outputs/results-2b-tf32.md)).
 
 The tokenizer gives the same ids as transformers for both prompts.
 Qwen3.5-0.8B and 2B load with no missing parameters and no shape mismatches, and the only unused tensors are the vision tower's and, in 0.8B, the multi-token prediction layer's ([`params.exs`](bumblebee/params.exs), [`params.txt`](bumblebee/outputs/params.txt)).
@@ -47,16 +50,19 @@ With `min_new_tokens`, transformers masks the end-of-sequence token out of the l
 
 ## Prompt time
 
-Bumblebee computes the linear attention over a prompt in chunks of 64 tokens, as transformers does.
+Bumblebee computes the linear attention over a prompt in chunks of 64 tokens, as transformers does, and solves a triangular system in each chunk.
 [`prefill.exs`](bumblebee/prefill.exs) times one forward pass of Qwen3.5-2B on EMLX in bfloat16 over prompts of 128 to 8192 tokens ([`prefill.json`](bumblebee/outputs/prefill.json)), and [`prefill.py`](bumblebee/prefill.py) times mlx-lm on the same prompts ([`mlx-prefill.json`](bumblebee/outputs/mlx-prefill.json)).
 Each time is one pass after a warm-up pass:
 
 | Prompt tokens | Bumblebee | mlx-lm |
 |---|---|---|
-| 128 | 38 ms | 31 ms |
-| 512 | 101 ms | 78 ms |
-| 2048 | 424 ms | 301 ms |
-| 8192 | 2011 ms | 1298 ms |
+| 128 | 43 ms | 31 ms |
+| 512 | 128 ms | 78 ms |
+| 2048 | 494 ms | 301 ms |
+| 8192 | 2282 ms | 1298 ms |
+
+A second run gave 43, 123, 497 and 2311 ms.
+The earlier series inverse took 37, 101, 419 and 1993 ms, but lost precision on repeated tokens.
 
 ## Qwen3.8-27B
 
