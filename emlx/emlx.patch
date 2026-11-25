@@ -1,15 +1,35 @@
 diff --git a/emlx/lib/emlx.ex b/emlx/lib/emlx.ex
-index 5b873f2..1f22140 100644
+index 5b873f2..2e908d8 100644
 --- a/emlx/lib/emlx.ex
 +++ b/emlx/lib/emlx.ex
-@@ -1347,6 +1347,7 @@ defmodule EMLX do
-       cfg.bits,
-       cfg.mode
-     )
-+    |> then(&if(cfg.transpose, do: EMLX.transpose(&1, [1, 0]), else: &1))
-     |> EMLX.Backend.to_nx()
+@@ -1339,15 +1339,18 @@ defmodule EMLX do
+       when not is_nil(cfg) do
+     biases_ref = cfg.biases && EMLX.Backend.from_nx(cfg.biases)
+ 
+-    EMLX.dequantize(
+-      weight_ref,
+-      EMLX.Backend.from_nx(cfg.scales),
+-      biases_ref,
+-      cfg.group_size,
+-      cfg.bits,
+-      cfg.mode
+-    )
+-    |> EMLX.Backend.to_nx()
++    dense =
++      EMLX.dequantize(
++        weight_ref,
++        EMLX.Backend.from_nx(cfg.scales),
++        biases_ref,
++        cfg.group_size,
++        cfg.bits,
++        cfg.mode
++      )
++
++    dense = if cfg.transpose, do: EMLX.transpose(dense, [1, 0]), else: dense
++    EMLX.Backend.to_nx(dense)
    end
  
+   @doc """
 diff --git a/emlx/lib/emlx/backend.ex b/emlx/lib/emlx/backend.ex
 index f647092..de92367 100644
 --- a/emlx/lib/emlx/backend.ex
