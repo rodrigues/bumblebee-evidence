@@ -3,7 +3,7 @@
 This repository backs the changes that let Elixir run the dense Qwen3.5, Qwen3.6 and Qwen3.8 models with Bumblebee:
 
 - Bumblebee: the Qwen3.5 text model, on branch [`qwen3-5`](https://github.com/rodrigues/bumblebee/tree/qwen3-5) of rodrigues/bumblebee ([`bumblebee.patch`](bumblebee/bumblebee.patch)).
-- Qwen3.8-27B in 4 bits also needs MLX quantized checkpoints on EMLX, so its evidence is in https://github.com/rodrigues/bumblebee-mlx-quantized-evidence.
+- Qwen3.8-27B in 4 bits also needs MLX quantized checkpoints on EMLX, so its evidence is on the [`mlx-quantized`](https://github.com/rodrigues/bumblebee-evidence/tree/mlx-quantized) branch of this repository.
 
 Every result is in [`bumblebee/outputs/`](bumblebee/outputs), so nothing needs running to read it; [Reproduce](#reproduce), at the end, reruns everything.
 All runs were on macOS (Apple M5 Pro, 64 GiB), with Elixir 1.20.5 and OTP 29.1.2.
