@@ -2,9 +2,9 @@
 # requires-python = ">=3.12"
 # dependencies = ["mlx-lm==0.32.2"]
 # ///
-# Converts tiny-random-Qwen3_5ForConditionalGeneration, from the checkpoints of https://github.com/rodrigues/bumblebee-qwen3-5-evidence, to an MLX checkpoint in 4 bits with group size 32,
+# Converts tiny-random-Qwen3_5ForConditionalGeneration, from the checkpoints of the qwen3-5 branch of https://github.com/rodrigues/bumblebee-evidence, to an MLX checkpoint in 4 bits with group size 32,
 # and writes its mlx-lm logits to outputs/tiny-qwen3_5-reference.json.
-# Run with: QWEN3_5_EVIDENCE_PATH=path/to/bumblebee-qwen3-5-evidence uv run tiny_qwen3_5.py
+# Run with: QWEN3_5_EVIDENCE_PATH=path/to/a/checkout/of/qwen3-5 uv run tiny_qwen3_5.py
 import json, os, shutil
 
 # MLX computes float32 matrix products in TF32 by default on M5-class GPUs; 0 keeps full float32.

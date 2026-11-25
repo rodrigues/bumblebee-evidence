@@ -5,7 +5,7 @@ This repository backs two changes that let Bumblebee run checkpoints quantized w
 - EMLX: transposing a quantized tensor, and the result type of quantized products, in two commits on elixir-nx/emlx `d5c78ae` ([`emlx.patch`](emlx/emlx.patch)), which also apply cleanly to its current main.
 - Bumblebee: loading the quantized weights, on branch [`mlx-quantized`](https://github.com/rodrigues/bumblebee/tree/mlx-quantized) of rodrigues/bumblebee ([`bumblebee.patch`](bumblebee/bumblebee.patch)).
 
-The Qwen3.5 checkpoints also need the Qwen3.5 model, from https://github.com/rodrigues/bumblebee-qwen3-5-evidence; branch [`qwen3-8-mlx`](https://github.com/rodrigues/bumblebee/tree/qwen3-8-mlx) has both.
+The Qwen3.5 checkpoints also need the Qwen3.5 model, from the [`qwen3-5`](https://github.com/rodrigues/bumblebee-evidence/tree/qwen3-5) branch of this repository; branch [`qwen3-8-mlx`](https://github.com/rodrigues/bumblebee/tree/qwen3-8-mlx) has both.
 
 Every result is in an `outputs/` folder, so nothing needs running to read it; [Reproduce](#reproduce), at the end, reruns everything.
 All runs were on macOS (Apple M5 Pro, 64 GiB), with Elixir 1.20.5, OTP 29.1.2 and mlx-lm 0.32.2.
@@ -81,7 +81,8 @@ cd bumblebee
 export MLX_ENABLE_TF32=0
 uv run reference.py
 uv run tiny.py
-QWEN3_5_EVIDENCE_PATH=path/to/bumblebee-qwen3-5-evidence uv run tiny_qwen3_5.py
+git worktree add ../../qwen3-5 origin/qwen3-5
+QWEN3_5_EVIDENCE_PATH=$PWD/../../qwen3-5 uv run tiny_qwen3_5.py
 BUMBLEBEE_PATH=path/to/bumblebee ./tests.sh
 uv run reference_f32.py
 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee.exs
