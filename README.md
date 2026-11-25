@@ -31,12 +31,12 @@ The published tiny checkpoint, yujiepan/kimi-linear-tiny-random, does not load i
 
 | Prompt | Same top choice as mlx-lm, teacher forced | Greedy tokens identical | Bumblebee decode | mlx-lm decode |
 |---|---|---|---|---|
-| capital | 100 of 100 | all 100 | 15.3 ms | 9.5 ms |
-| story | 89 of 100 | first 4 | 15.4 ms | 9.5 ms |
+| capital | 100 of 100 | all 100 | 13.7 ms | 9.5 ms |
+| story | 89 of 100 | first 4 | 13.4 ms | 9.5 ms |
 
 Where the top choices differ, mlx-lm's margin between its top two tokens is at most 0.5, and the story diverges at a margin of 0.125; both continuations are coherent stories.
 The checkpoint loads with nothing missing, mismatched or unused: [`params-48b.txt`](bumblebee/outputs/params-48b.txt) is empty because the load logged no differences.
-The EMLX used has the `compiled-while-body` branch, which compiles the generation loop's body on the GPU.
+The EMLX used is the `compiled-while-body` branch, which compiles the generation loop's body on the GPU; without it, decode took 15.3 ms per token.
 
 Bumblebee cannot load this model's tokenizer, which ships as `tiktoken.model` with Python code and no `tokenizer.json`, so the Bumblebee script takes the token ids that mlx-lm's tokenizer gave, from the reference.
 
