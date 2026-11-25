@@ -1,7 +1,7 @@
 From c8d4d1b1d5729457bd581e9b0eb0bdf98c87a604 Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Wed, 25 Nov 2026 01:46:50 +0000
-Subject: [PATCH] Add Llama 4
+Subject: [PATCH 1/2] Add Llama 4
 
 ---
  lib/bumblebee.ex                              |   5 +
@@ -1163,6 +1163,85 @@ index 0000000..20d8330
 +    end
 +  end
 +end
+-- 
+2.56.1
+
+
+From b076249a3c228015f56492a3d16b338fbe902e5d Mon Sep 17 00:00:00 2001
+From: Victor Rodrigues <vitumail@gmail.com>
+Date: Wed, 25 Nov 2026 11:47:17 +0000
+Subject: [PATCH 2/2] Llama 4: Attend to the whole sequence when the chunk size
+ is null
+
+---
+ lib/bumblebee/text/llama4.ex        |  8 ++++++--
+ test/bumblebee/text/llama4_test.exs | 20 ++++++++++++++++++++
+ 2 files changed, 26 insertions(+), 2 deletions(-)
+
+diff --git a/lib/bumblebee/text/llama4.ex b/lib/bumblebee/text/llama4.ex
+index 4fbcad4..1c54cdc 100644
+--- a/lib/bumblebee/text/llama4.ex
++++ b/lib/bumblebee/text/llama4.ex
+@@ -58,7 +58,8 @@ defmodule Bumblebee.Text.Llama4 do
+       ],
+       attention_chunk_size: [
+         default: 8192,
+-        doc: "the number of tokens in each chunk of chunked attention blocks"
++        doc:
++          "the number of tokens in each chunk of chunked attention blocks. When `nil`, those blocks attend to the whole sequence"
+       ],
+       use_query_key_norm: [
+         default: true,
+@@ -440,6 +441,9 @@ defmodule Bumblebee.Text.Llama4 do
+ 
+     bias =
+       case layer_type do
++        :chunked_attention when spec.attention_chunk_size == nil ->
++          Layers.none()
++
+         :chunked_attention ->
+           Axon.layer(&chunk_bias/4, [query, key, Axon.optional(block.offset)],
+             size: spec.attention_chunk_size,
+@@ -635,7 +639,7 @@ defmodule Bumblebee.Text.Llama4 do
+                  "full_attention" => :full_attention
+                })
+              )},
+-          attention_chunk_size: {"attention_chunk_size", number()},
++          attention_chunk_size: {"attention_chunk_size", optional(number())},
+           use_query_key_norm: {"use_qk_norm", boolean()},
+           attention_temperature_tuning: {"attn_temperature_tuning", boolean()},
+           attention_temperature_scale: {"attn_scale", number()},
+diff --git a/test/bumblebee/text/llama4_test.exs b/test/bumblebee/text/llama4_test.exs
+index 20d8330..f921597 100644
+--- a/test/bumblebee/text/llama4_test.exs
++++ b/test/bumblebee/text/llama4_test.exs
+@@ -57,6 +57,26 @@ defmodule Bumblebee.Text.Llama4Test do
+     )
+   end
+ 
++  test ":for_causal_language_modeling with a null attention chunk size" do
++    repo = {:hf, "bumblebee-testing/tiny-random-Llama4ForCausalLM"}
++    {:ok, spec} = Bumblebee.load_spec(repo)
++
++    spec =
++      Bumblebee.HuggingFace.Transformers.Config.load(spec, %{"attention_chunk_size" => nil})
++
++    assert spec.attention_chunk_size == nil
++
++    assert {:ok, %{model: model, params: params}} = Bumblebee.load_model(repo, spec: spec)
++
++    assert {:ok, %{model: causal_model, params: causal_params}} =
++             Bumblebee.load_model(repo, spec: Bumblebee.configure(spec, attention_chunk_size: 12))
++
++    assert_all_close(
++      Axon.predict(model, params, inputs()).logits,
++      Axon.predict(causal_model, causal_params, inputs()).logits
++    )
++  end
++
+   test ":for_causal_language_modeling with experts in every other block" do
+     assert {:ok, %{model: model, params: params, spec: spec}} =
+              Bumblebee.load_model(
 -- 
 2.56.1
 

@@ -31,9 +31,26 @@ The published tiny checkpoint has all its expert weights at zero, so the built c
 The layer tests check both routings on both expert paths against the output spelled out by hand.
 The checkpoints load with no missing parameters and no shape mismatches; the multimodal one leaves only its vision tower and projector unused ([`params.txt`](bumblebee/outputs/params.txt)).
 
+## A real checkpoint: Llama Guard 4
+
+Llama Guard 4 12B is the smallest Llama 4 with trained weights I found among the 60 most downloaded on the Hub: a dense model, without experts or chunked attention, with normalized queries and keys in every block.
+[`reference_guard.py`](bumblebee/reference_guard.py) runs `unsloth/Llama-Guard-4-12B`, an open copy of Meta's release, in transformers 5.23.0 in bfloat16 on the CPU, and [`bumblebee_guard.exs`](bumblebee/bumblebee_guard.exs) runs it in Bumblebee on EMLX in bfloat16 on the GPU ([`results-guard.md`](bumblebee/outputs/results-guard.md)):
+
+| Prompt | Output | Greedy tokens | Same top choice, teacher forced |
+|---|---|---|---|
+| benign chat | safe | identical | 3 of 3 |
+| lockpicking chat | unsafe, S2 | identical | 6 of 6 |
+| plain continuation | end of text | identical | 1 of 1 |
+
+The logits differ by at most 0.5 over the first positions, the bfloat16 rounding of logits that size.
+Only the vision tower and the projector are left unused.
+
+Its config sets attention_chunk_size to null while marking every block as chunked attention.
+transformers 5.23.0 refuses a null chunk size, so the reference sets it to 8192, which is plain causal attention for prompts this short; Bumblebee now loads null as attention to the whole sequence, and a test checks that it matches chunks as long as the input.
+
 ## Not checked
 
-- A real checkpoint: the smallest, Scout, is 61.1 GB in MLX 4-bit and does not fit a 64 GB Mac.
+- A real checkpoint with experts or chunked attention: the smallest, Scout, is 61.1 GB in MLX 4-bit and does not fit a 64 GB Mac. `inference-optimization/Llama-4-Scout-1.7B-0.4B-Instruct` has Scout's shape, but 75 of its 100 text tensors, the embeddings, output head and experts among them, are all zeros.
 - Llama 4's MLX conversions. I have not checked how they store the experts, and loading them needs the reordering of query and key weights applied to quantized weights too.
 - Left padding: transformers counts the temperature and chunk positions from the start of the cache, and Bumblebee does the same, which ignores padding in both.
 - The vision tower.
@@ -45,4 +62,6 @@ cd bumblebee
 uv run reference.py
 BUMBLEBEE_PATH=path/to/bumblebee ./tests.sh
 (cd path/to/bumblebee && MIX_ENV=test mix run "$OLDPWD/params.exs")
+uv run reference_guard.py
+MLX_ENABLE_TF32=0 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_guard.exs
 ```
