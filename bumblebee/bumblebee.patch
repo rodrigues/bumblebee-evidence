@@ -145,36 +145,62 @@ index 911a3c1..7ea7043 100644
 +  end
  end
 diff --git a/lib/bumblebee/layers.ex b/lib/bumblebee/layers.ex
-index 671b535..0681fa5 100644
+index 671b535..dffb4d2 100644
 --- a/lib/bumblebee/layers.ex
 +++ b/lib/bumblebee/layers.ex
-@@ -29,6 +29,85 @@ defmodule Bumblebee.Layers do
+@@ -29,6 +29,111 @@ defmodule Bumblebee.Layers do
      end
    end
  
-+  @doc false
-+  def mixture_of_experts_impl(x, router_logits, gate, intermediate, output, opts) do
++  @doc """
++  Adds a mixture-of-experts layer to the network.
++
++  Each token goes through the experts listed in `experts`, and the
++  layer returns the sum of their outputs multiplied by `weights`.
++  Both are `{batch_size, sequence_length, k}`, as chosen by a router.
++
++  Each expert is a gated feed-forward network, with kernels stacked
++  along the first axis: `gate` and `intermediate` have the shape
++  `{num_experts, intermediate_size, hidden_size}`, and `output` has
++  the shape `{num_experts, hidden_size, intermediate_size}`.
++
++  ## Options
++
++    * `:name` - layer name
++
++    * `:activation` - the activation used in the gated experts.
++      Defaults to `:silu`
++
++  """
++  def mixture_of_experts(x, weights, experts, gate, intermediate, output, opts \\ []) do
++    opts = Keyword.validate!(opts, [:name, activation: :silu])
++
++    Axon.layer(
++      &mixture_of_experts_impl/7,
++      [x, weights, experts, gate, intermediate, output],
++      name: opts[:name],
++      activation: opts[:activation],
++      op_name: :mixture_of_experts
++    )
++  end
++
++  deftransformp mixture_of_experts_impl(
++                  x,
++                  weights,
++                  experts,
++                  gate,
++                  intermediate,
++                  output,
++                  opts \\ []
++                ) do
 +    {batch_size, sequence_length, hidden_size} = Nx.shape(x)
 +    num_tokens = batch_size * sequence_length
 +    num_experts = Nx.axis_size(gate, 0)
-+    k = opts[:num_experts_per_token]
++    k = Nx.axis_size(experts, -1)
 +
 +    x = Nx.reshape(x, {num_tokens, hidden_size})
-+
-+    probabilities =
-+      router_logits
-+      |> Nx.reshape({num_tokens, num_experts})
-+      |> Nx.as_type(:f32)
-+      |> Axon.Activations.softmax(axis: -1)
-+
-+    {weights, experts} = Nx.top_k(probabilities, k: k)
-+
-+    weights =
-+      if opts[:normalize_top_k],
-+        do: Nx.divide(weights, Nx.sum(weights, axes: [-1], keep_axes: true)),
-+        else: weights
-+
-+    weights = Nx.as_type(weights, Nx.type(x))
++    weights = weights |> Nx.reshape({num_tokens, k}) |> Nx.as_type(Nx.type(x))
++    experts = Nx.reshape(experts, {num_tokens, k})
 +    activation = activation_fun(opts[:activation])
 +
 +    # Gathering the chosen experts reads k experts per token, while
@@ -235,19 +261,20 @@ index 671b535..0681fa5 100644
    Implements the GeLU activation approximated with tanh.
  
 diff --git a/lib/bumblebee/layers/transformer.ex b/lib/bumblebee/layers/transformer.ex
-index 525f5de..f9529a3 100644
+index 525f5de..3d65bf8 100644
 --- a/lib/bumblebee/layers/transformer.ex
 +++ b/lib/bumblebee/layers/transformer.ex
-@@ -286,6 +286,79 @@ defmodule Bumblebee.Layers.Transformer do
+@@ -286,6 +286,60 @@ defmodule Bumblebee.Layers.Transformer do
      |> dense.(output_size, join(name, "output"))
    end
  
 +  @doc """
 +  Adds a mixture-of-experts feed-forward block to the network.
 +
-+  A router picks `:num_experts_per_token` of `:num_experts` gated
-+  feed-forward networks for each token, and the block returns the sum
-+  of their outputs weighted by the router probabilities.
++  Each token goes through the experts chosen by a router, given as
++  `weights` and `experts`, both `{batch_size, sequence_length, k}`.
++  Every expert is a gated feed-forward network, and the block returns
++  the sum of their outputs multiplied by `weights`.
 +
 +  ## Options
 +
@@ -255,46 +282,31 @@ index 525f5de..f9529a3 100644
 +
 +    * `:num_experts` - the number of experts
 +
-+    * `:num_experts_per_token` - the number of experts each token is
-+      routed to
-+
 +    * `:activation` - the activation used in the gated experts.
 +      Defaults to `:silu`
-+
-+    * `:normalize_top_k` - whether to normalize the probabilities of
-+      the chosen experts to sum to 1. Defaults to `true`
 +
 +    * `:kernel_initializer` - initializer for kernel weights. Defaults
 +      to `:glorot_uniform`
 +
 +  """
-+  def mixture_of_experts(x, intermediate_size, output_size, opts) do
++  def mixture_of_experts(x, weights, experts, intermediate_size, output_size, opts) do
 +    opts =
 +      Keyword.validate!(opts, [
 +        :name,
 +        :num_experts,
-+        :num_experts_per_token,
 +        activation: :silu,
-+        normalize_top_k: true,
 +        kernel_initializer: :glorot_uniform
 +      ])
 +
 +    name = opts[:name]
 +    num_experts = opts[:num_experts]
 +
-+    router_logits =
-+      Axon.dense(x, num_experts,
-+        use_bias: false,
-+        kernel_initializer: opts[:kernel_initializer],
-+        name: join(name, "router")
-+      )
-+
 +    kernel = fn param_name, shape_fun ->
 +      Axon.param(param_name, shape_fun, initializer: opts[:kernel_initializer])
 +    end
 +
 +    # Expert kernels are {num_experts, out, in}, as in the checkpoints
-+    input_kernel_shape = fn input_shape, _ ->
++    input_kernel_shape = fn input_shape, _, _ ->
 +      {num_experts, intermediate_size, elem(input_shape, tuple_size(input_shape) - 1)}
 +    end
 +
@@ -302,16 +314,11 @@ index 525f5de..f9529a3 100644
 +    intermediate = kernel.("intermediate_kernel", input_kernel_shape)
 +
 +    output =
-+      kernel.("output_kernel", fn _, _ -> {num_experts, output_size, intermediate_size} end)
++      kernel.("output_kernel", fn _, _, _ -> {num_experts, output_size, intermediate_size} end)
 +
-+    Axon.layer(
-+      &Layers.mixture_of_experts_impl/6,
-+      [x, router_logits, gate, intermediate, output],
++    Layers.mixture_of_experts(x, weights, experts, gate, intermediate, output,
 +      name: join(name, "experts"),
-+      num_experts_per_token: opts[:num_experts_per_token],
-+      activation: opts[:activation],
-+      normalize_top_k: opts[:normalize_top_k],
-+      op_name: :mixture_of_experts
++      activation: opts[:activation]
 +    )
 +  end
 +
@@ -319,7 +326,7 @@ index 525f5de..f9529a3 100644
    Adds a multi-head attention block to the network.
  
 diff --git a/lib/bumblebee/text/qwen3.ex b/lib/bumblebee/text/qwen3.ex
-index a959e9d..3e4326f 100644
+index a959e9d..680207c 100644
 --- a/lib/bumblebee/text/qwen3.ex
 +++ b/lib/bumblebee/text/qwen3.ex
 @@ -68,6 +68,34 @@ defmodule Bumblebee.Text.Qwen3 do
@@ -367,7 +374,15 @@ index a959e9d..3e4326f 100644
    ## Architectures
  
      * `:base` - plain Qwen3 without any head on top
-@@ -371,10 +402,7 @@ defmodule Bumblebee.Text.Qwen3 do
+@@ -141,6 +172,7 @@ defmodule Bumblebee.Text.Qwen3 do
+   @behaviour Bumblebee.Text.Generation
+ 
+   import Bumblebee.Utils.Model, only: [join: 2]
++  import Nx.Defn
+ 
+   alias Bumblebee.Layers
+ 
+@@ -371,10 +403,7 @@ defmodule Bumblebee.Text.Qwen3 do
          hidden_state =
            hidden_state
            |> Layers.rms_norm(epsilon: spec.layer_norm_epsilon, name: join(name, "output_norm"))
@@ -379,33 +394,64 @@ index a959e9d..3e4326f 100644
            |> Axon.add(shortcut)
  
          %{
-@@ -386,6 +414,33 @@ defmodule Bumblebee.Text.Qwen3 do
+@@ -386,6 +415,64 @@ defmodule Bumblebee.Text.Qwen3 do
      )
    end
  
 +  defp ffn(hidden_state, index, spec, opts) do
++    name = opts[:name]
++
 +    if expert_block?(spec, index) do
++      router_logits =
++        Axon.dense(hidden_state, spec.num_experts,
++          use_bias: false,
++          kernel_initializer: kernel_initializer(spec),
++          name: join(name, "router")
++        )
++
++      {weights, experts} =
++        Axon.layer(&route/2, [router_logits],
++          num_experts_per_token: spec.num_experts_per_token,
++          normalize_top_k: spec.normalize_top_k,
++          op_name: :route
++        )
++        |> Layers.unwrap_tuple(2)
++
 +      Layers.Transformer.mixture_of_experts(
 +        hidden_state,
++        weights,
++        experts,
 +        spec.expert_intermediate_size,
 +        spec.hidden_size,
 +        num_experts: spec.num_experts,
-+        num_experts_per_token: spec.num_experts_per_token,
-+        normalize_top_k: spec.normalize_top_k,
 +        activation: spec.activation,
 +        kernel_initializer: kernel_initializer(spec),
-+        name: opts[:name]
++        name: name
 +      )
 +    else
 +      Layers.Transformer.gated_ffn(hidden_state, spec.intermediate_size, spec.hidden_size,
 +        activation: spec.activation,
-+        name: opts[:name]
++        name: name
 +      )
 +    end
 +  end
 +
-+  @doc false
-+  def expert_block?(spec, index) do
++  defnp route(router_logits, opts \\ []) do
++    opts = keyword!(opts, [:num_experts_per_token, :normalize_top_k, mode: :inference])
++
++    probabilities = Axon.Activations.softmax(Nx.as_type(router_logits, :f32), axis: -1)
++    {weights, experts} = Nx.top_k(probabilities, k: opts[:num_experts_per_token])
++
++    weights =
++      case opts[:normalize_top_k] do
++        true -> weights / Nx.sum(weights, axes: [-1], keep_axes: true)
++        false -> weights
++      end
++
++    {weights, experts}
++  end
++
++  defp expert_block?(spec, index) do
 +    spec.num_experts != nil and index not in spec.dense_block_indices and
 +      rem(index + 1, spec.expert_block_step) == 0
 +  end
@@ -413,7 +459,7 @@ index a959e9d..3e4326f 100644
    defp language_modeling_head(hidden_state, spec, opts) do
      name = opts[:name]
  
-@@ -416,7 +471,13 @@ defmodule Bumblebee.Text.Qwen3 do
+@@ -416,7 +503,13 @@ defmodule Bumblebee.Text.Qwen3 do
            intermediate_size: {"intermediate_size", number()},
            activation: {"hidden_act", activation()},
            initializer_scale: {"initializer_range", number()},
@@ -428,7 +474,7 @@ index a959e9d..3e4326f 100644
          ) ++
            Shared.rotary_embedding_options_from_transformers(data) ++
            Shared.common_options_from_transformers(data, spec)
-@@ -427,7 +488,36 @@ defmodule Bumblebee.Text.Qwen3 do
+@@ -427,7 +520,36 @@ defmodule Bumblebee.Text.Qwen3 do
  
    defimpl Bumblebee.HuggingFace.Transformers.Model do
      def params_mapping(spec) do
@@ -466,7 +512,7 @@ index a959e9d..3e4326f 100644
          "embedder.token_embedding" => "model.embed_tokens",
          "decoder.blocks.{n}.self_attention.query" => "model.layers.{n}.self_attn.q_proj",
          "decoder.blocks.{n}.self_attention.key" => "model.layers.{n}.self_attn.k_proj",
-@@ -444,7 +534,7 @@ defmodule Bumblebee.Text.Qwen3 do
+@@ -444,7 +566,7 @@ defmodule Bumblebee.Text.Qwen3 do
          "language_modeling_head.output" =>
            if(spec.tie_word_embeddings, do: "model.embed_tokens", else: "lm_head"),
          "sequence_classification_head.output" => "score"
@@ -524,80 +570,74 @@ index a479153..1fbee06 100644
    test "raises without the EMLX backend" do
      assert_raise ArgumentError, ~r/loading MLX quantized weights requires the EMLX backend/, fn ->
        Bumblebee.load_model(@repo_4bit, backend: Nx.BinaryBackend)
-diff --git a/test/bumblebee/layers/mixture_of_experts_test.exs b/test/bumblebee/layers/mixture_of_experts_test.exs
-new file mode 100644
-index 0000000..f27ba0a
---- /dev/null
-+++ b/test/bumblebee/layers/mixture_of_experts_test.exs
-@@ -0,0 +1,68 @@
-+defmodule Bumblebee.Layers.MixtureOfExpertsTest do
-+  use ExUnit.Case, async: true
+diff --git a/test/bumblebee/layers_test.exs b/test/bumblebee/layers_test.exs
+index b12baa4..426bcc6 100644
+--- a/test/bumblebee/layers_test.exs
++++ b/test/bumblebee/layers_test.exs
+@@ -114,4 +114,63 @@ defmodule Bumblebee.LayersTest do
+       )
+     end
+   end
 +
-+  import Bumblebee.TestHelpers
++  describe "mixture of experts" do
++    # Gathering the chosen experts is used for up to 2 tokens, and computing every expert for more
++    for num_tokens <- [2, 5] do
++      test "sums the outputs of the chosen experts multiplied by their weights, with #{num_tokens} tokens" do
++        num_tokens = unquote(num_tokens)
 +
-+  # 4 experts, 2 per token, hidden size 4 and intermediate size 3
-+  defp kernels(key) do
-+    {gate, key} = Nx.Random.normal(key, shape: {4, 3, 4})
-+    {intermediate, key} = Nx.Random.normal(key, shape: {4, 3, 4})
-+    {output, _key} = Nx.Random.normal(key, shape: {4, 4, 3})
-+    {gate, intermediate, output}
-+  end
++        # 4 experts, 2 per token, hidden size 4 and intermediate size 3
++        key = Nx.Random.key(0)
++        {x, key} = Nx.Random.normal(key, shape: {1, num_tokens, 4})
++        {weights, key} = Nx.Random.uniform(key, shape: {1, num_tokens, 2})
++        {gate, key} = Nx.Random.normal(key, shape: {4, 3, 4})
++        {intermediate, key} = Nx.Random.normal(key, shape: {4, 3, 4})
++        {output, _key} = Nx.Random.normal(key, shape: {4, 4, 3})
++        experts = Nx.tensor([[[1, 3], [0, 2], [3, 0], [2, 1], [0, 3]]])[[.., 0..(num_tokens - 1)]]
 +
-+  defp run(x, router_logits, {gate, intermediate, output}) do
-+    Bumblebee.Layers.mixture_of_experts_impl(x, router_logits, gate, intermediate, output,
-+      num_experts_per_token: 2,
-+      activation: :silu,
-+      normalize_top_k: true
-+    )
-+  end
++        model =
++          Layers.mixture_of_experts(
++            Axon.input("x"),
++            Axon.input("weights"),
++            Axon.input("experts"),
++            Axon.input("gate"),
++            Axon.input("intermediate"),
++            Axon.input("output")
++          )
 +
-+  # The output of a token computed with only its two experts, spelled out
-+  defp reference(x, router_logits, {gate, intermediate, output}, experts) do
-+    probabilities = router_logits |> Nx.take(Nx.tensor(experts)) |> Axon.Activations.softmax()
++        inputs = %{
++          "x" => x,
++          "weights" => weights,
++          "experts" => experts,
++          "gate" => gate,
++          "intermediate" => intermediate,
++          "output" => output
++        }
 +
-+    experts
-+    |> Enum.with_index()
-+    |> Enum.map(fn {expert, i} ->
-+      hidden =
-+        Nx.multiply(
-+          Axon.Activations.silu(Nx.dot(gate[expert], x)),
-+          Nx.dot(intermediate[expert], x)
-+        )
++        expected =
++          Enum.map(0..(num_tokens - 1), fn token ->
++            input = x[[0, token]]
 +
-+      Nx.multiply(Nx.dot(output[expert], hidden), probabilities[i])
-+    end)
-+    |> Enum.reduce(&Nx.add/2)
-+  end
++            Enum.map(0..1, fn slot ->
++              expert = Nx.to_number(experts[[0, token, slot]])
 +
-+  # Gathering the chosen experts is used for up to 2 tokens, and computing every expert for more
-+  for num_tokens <- [2, 5] do
-+    test "the output of a token depends only on its top k experts, with #{num_tokens} tokens" do
-+      num_tokens = unquote(num_tokens)
-+      key = Nx.Random.key(0)
-+      {x, key} = Nx.Random.normal(key, shape: {1, num_tokens, 4})
-+      {router_logits, key} = Nx.Random.normal(key, shape: {1, num_tokens, 4})
-+      # The first token is routed to experts 1 and 3
-+      router_logits =
-+        Nx.put_slice(router_logits, [0, 0, 0], Nx.tensor([[[-5.0, 2.0, -5.0, 1.0]]]))
++              hidden =
++                Nx.multiply(
++                  Axon.Activations.silu(Nx.dot(gate[expert], input)),
++                  Nx.dot(intermediate[expert], input)
++                )
 +
-+      kernels = kernels(key)
++              Nx.multiply(Nx.dot(output[expert], hidden), weights[[0, token, slot]])
++            end)
++            |> Enum.reduce(&Nx.add/2)
++          end)
++          |> Nx.stack()
++          |> Nx.new_axis(0)
 +
-+      output = run(x, router_logits, kernels)
-+
-+      assert_all_close(
-+        output[[0, 0]],
-+        reference(x[[0, 0]], router_logits[[0, 0]], kernels, [1, 3])
-+      )
-+
-+      # Changing the experts the first token is not routed to leaves its output unchanged
-+      {gate, intermediate, output_kernel} = kernels
-+      changed = Nx.multiply(Nx.tensor([10.0, 1.0, 10.0, 1.0]) |> Nx.reshape({4, 1, 1}), gate)
-+      changed_output = run(x, router_logits, {changed, intermediate, output_kernel})
-+
-+      assert_all_close(changed_output[[0, 0]], output[[0, 0]])
++        assert_all_close(Axon.predict(model, Axon.ModelState.empty(), inputs), expected)
++      end
 +    end
 +  end
-+end
+ end
 diff --git a/test/bumblebee/text/qwen3_test.exs b/test/bumblebee/text/qwen3_test.exs
 index 5134d6d..6540ee8 100644
 --- a/test/bumblebee/text/qwen3_test.exs
