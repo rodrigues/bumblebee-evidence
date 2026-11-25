@@ -50,7 +50,8 @@ export MLX_ENABLE_TF32=0
 uv run reference.py
 BUMBLEBEE_PATH=path/to/bumblebee elixir bumblebee.exs
 uv run tiny_mlx.py
-BUMBLEBEE_PATH=path/to/bumblebee MLX_EVIDENCE_PATH=path/to/bumblebee-mlx-quantized-evidence ./tests.sh
+git worktree add ../../mlx-quantized origin/mlx-quantized
+BUMBLEBEE_PATH=path/to/bumblebee MLX_EVIDENCE_PATH=$PWD/../../mlx-quantized ./tests.sh
 uv run reference_30b.py
 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_30b.exs
 ```

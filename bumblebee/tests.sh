@@ -1,7 +1,7 @@
 #!/bin/sh
 # Runs the Bumblebee tests this change touches, with the MLX checkpoints read from checkpoints/ here and from the MLX quantized evidence,
 # because the bumblebee-testing repositories the tests name do not exist yet. Writes outputs/tests.txt.
-# Run with: MLX_ENABLE_TF32=0 BUMBLEBEE_PATH=path/to/bumblebee MLX_EVIDENCE_PATH=path/to/bumblebee-mlx-quantized-evidence ./tests.sh
+# Run with: MLX_ENABLE_TF32=0 BUMBLEBEE_PATH=path/to/bumblebee MLX_EVIDENCE_PATH=/absolute/path/to/a/checkout/of/mlx-quantized ./tests.sh
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 cd "$BUMBLEBEE_PATH"
