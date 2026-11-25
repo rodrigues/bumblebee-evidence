@@ -41,13 +41,13 @@ The Bumblebee test file on the branch checks the same values, and passes on EXLA
 
 | Prompt | 30 greedy tokens | Same top choice as mlx-lm, teacher forced | Bumblebee per token | mlx-lm per token |
 |---|---|---|---|---|
-| capital | identical | 30 of 30 | 78.9 ms | 75.9 ms |
-| story | identical | 30 of 30 | 78.6 ms | 74.7 ms |
+| capital | identical | 30 of 30 | 78.5 ms | 75.9 ms |
+| story | identical | 30 of 30 | 78.4 ms | 74.7 ms |
 
 - The tokenizer gives the same ids as mlx-lm for both prompts.
-- The checkpoint loads in 2.0 s with no missing parameters, no shape mismatches and no unused tensors.
+- The checkpoint loads in 2.9 s with no missing parameters, no shape mismatches and no unused tensors.
 - Bumblebee holds 18.06 GB after loading and peaks at 20.88 GB while generating; mlx-lm holds 17.27 GB and peaks at 17.62 GB.
-- From a prompt of 1,271 tokens, longer than the sliding window of 1,024, 30 tokens generated with the cache are identical to those from running the full sequence for each token.
+- From a prompt of 1,521 tokens, longer than the sliding window of 1,024, 30 tokens generated with the cache are identical to those from running the full sequence for each token.
 
 The conversion has no chat template, so the scripts use the one from `google/gemma-4-31B-it`.
 The templates of the smaller Gemma 4 models do not close the thinking channel when thinking is off, and mlx-lm renders the template with thinking on unless told otherwise; with either, the model starts by thinking.

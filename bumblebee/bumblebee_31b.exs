@@ -98,7 +98,7 @@ results =
 %{active_memory: active, peak_memory: peak} = EMLX.memory_info()
 
 # A prompt longer than the sliding window: the chat prompt around a long passage
-passage = String.duplicate("The lighthouse keeper climbed the spiral stairs at dusk, counted the steps, trimmed the wick and wrote the weather in his log. ", 50)
+passage = String.duplicate("The lighthouse keeper climbed the spiral stairs at dusk, counted the steps, trimmed the wick and wrote the weather in his log. ", 60)
 long_prompt = String.replace(reference["capital"]["prompt"], "What is the capital of France? Answer in one sentence.", passage <> "Summarize this passage in one sentence.")
 long_ids = encode.(long_prompt)
 cached = generate_tokens.(long_ids)

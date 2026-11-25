@@ -1,5 +1,5 @@
 {
-  "load_seconds": 2.0,
+  "load_seconds": 2.9,
   "long_prompt_cached": [
     236776,
     63937,
@@ -64,7 +64,7 @@
     45518,
     107
   ],
-  "long_prompt_tokens": 1271,
+  "long_prompt_tokens": 1521,
   "memory_after_generating_gb": 20.17,
   "memory_after_loading_gb": 18.06,
   "params_log": {
@@ -116,7 +116,7 @@
         818,
         5279
       ],
-      "ms_per_token": 78.9,
+      "ms_per_token": 78.5,
       "teacher_forced_argmax": [
         818,
         5279,
@@ -211,7 +211,7 @@
         15599,
         529
       ],
-      "ms_per_token": 78.6,
+      "ms_per_token": 78.4,
       "teacher_forced_argmax": [
         236788,
         77938,
