@@ -1,0 +1,5 @@
+# Parameter log of the tiny checkpoints
+
+- tiny-random-Llama4ForCausalLM: nothing missing, unused or mismatched
+- tiny-random-Llama4ForCausalLM-interleaved: nothing missing, unused or mismatched
+- tiny-random-llama4: ["the following PyTorch parameters were unused:"] %{"multi_modal_projector" => 1, "vision_model" => 41}
