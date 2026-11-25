@@ -49,6 +49,9 @@ The Bumblebee test file on the branch checks the same values, and passes on EXLA
 - Bumblebee holds 18.06 GB after loading and peaks at 20.88 GB while generating; mlx-lm holds 17.27 GB and peaks at 17.62 GB.
 - From a prompt of 1,521 tokens, longer than the sliding window of 1,024, 30 tokens generated with the cache are identical to those from running the full sequence for each token.
 
+[`tiny_mlx.py`](bumblebee/tiny_mlx.py) converts the tiny checkpoint with 31B's keys-as-values attention to MLX 4 bits with mlx-lm, leaving its down projections unquantized because their input size is not a multiple of the group, and records mlx-lm's logits in [`tiny-mlx-reference.json`](bumblebee/outputs/tiny-mlx-reference.json).
+A test on the `gemma4-mlx` branch checks Bumblebee on EMLX against them within 1.0e-4, and passes.
+
 The conversion has no chat template, so the scripts use the one from `google/gemma-4-31B-it`.
 The templates of the smaller Gemma 4 models do not close the thinking channel when thinking is off, and mlx-lm renders the template with thinking on unless told otherwise; with either, the model starts by thinking.
 The EMLX used is the `compiled-while-body` branch.
@@ -94,6 +97,7 @@ The 31B scripts need the conversion and the 31B chat template, and `MLX_ENABLE_T
 
 ```sh
 export MLX_ENABLE_TF32=0 GEMMA4_31B_PATH=path/to/target GEMMA4_TEMPLATE_PATH=path/to/gemma-4-31B-it/chat_template.jinja
+uv run tiny_mlx.py
 uv run reference_31b.py
 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_31b.exs
 ```
