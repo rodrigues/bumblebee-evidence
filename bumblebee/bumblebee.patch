@@ -1,4 +1,4 @@
-From 6631f77031ef2a020e16ea7f5800314d90e7bd15 Mon Sep 17 00:00:00 2001
+From c8d4d1b1d5729457bd581e9b0eb0bdf98c87a604 Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Wed, 25 Nov 2026 01:46:50 +0000
 Subject: [PATCH] Add Llama 4
@@ -15,7 +15,7 @@ Subject: [PATCH] Add Llama 4
  create mode 100644 test/bumblebee/text/llama4_test.exs
 
 diff --git a/lib/bumblebee.ex b/lib/bumblebee.ex
-index ceb6bcd..c4fc741 100644
+index 8933ba0..e554e22 100644
 --- a/lib/bumblebee.ex
 +++ b/lib/bumblebee.ex
 @@ -212,6 +212,9 @@ defmodule Bumblebee do
@@ -38,7 +38,7 @@ index ceb6bcd..c4fc741 100644
      "mbart" => :mbart,
      "modernbert" => :modernbert,
 diff --git a/lib/bumblebee/layers.ex b/lib/bumblebee/layers.ex
-index b90476f..acae63d 100644
+index 0681fa5..9b0e82f 100644
 --- a/lib/bumblebee/layers.ex
 +++ b/lib/bumblebee/layers.ex
 @@ -38,13 +38,15 @@ defmodule Bumblebee.Layers do
@@ -63,10 +63,10 @@ index b90476f..acae63d 100644
  
      weights =
        if opts[:normalize_top_k],
-@@ -59,31 +61,35 @@ defmodule Bumblebee.Layers do
-     # depends on the number of tokens
+@@ -60,31 +62,35 @@ defmodule Bumblebee.Layers do
+     # gathered, which backends can do without unpacking them
      output =
-       if num_tokens * k <= num_experts do
+       if num_tokens * k <= num_experts or Nx.Type.integer?(Nx.type(gate)) do
 -        routed_experts(x, weights, experts, gate, intermediate, output, activation)
 +        routed_experts(x, weights, experts, gate, intermediate, output, activation, opts)
        else
@@ -104,7 +104,7 @@ index b90476f..acae63d 100644
      num_experts = Nx.axis_size(gate, 0)
  
      # The router weights of every expert, zero for the experts not chosen
-@@ -92,13 +98,26 @@ defmodule Bumblebee.Layers do
+@@ -93,13 +99,26 @@ defmodule Bumblebee.Layers do
        |> Nx.multiply(Nx.new_axis(weights, -1))
        |> Nx.sum(axes: [1])
  

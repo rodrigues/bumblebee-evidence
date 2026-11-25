@@ -1,6 +1,6 @@
 # Llama 4 in Bumblebee: evidence
 
-This repository backs the change that lets Elixir run Llama 4 text models with Bumblebee, on branch `llama4` ([`bumblebee.patch`](bumblebee/bumblebee.patch)), which stacks on the Qwen3-MoE branch for its mixture of experts layer.
+This repository backs the change that lets Elixir run Llama 4 text models with Bumblebee, on branch `llama4` ([`bumblebee.patch`](bumblebee/bumblebee.patch)), which stacks on the `qwen3-moe-mlx` branch for its mixture of experts layer.
 Llama 4 differs from Llama 3 in four ways, and Bumblebee implements each:
 
 - Three of every four blocks attend within chunks of 8,192 tokens and use rotary embedding over adjacent pairs; Bumblebee reorders the query and key weights on load, so its usual rotary embedding gives the same result.
