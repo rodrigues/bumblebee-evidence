@@ -3,7 +3,7 @@
 This repository backs two changes that let Elixir run Gemma 4 with Bumblebee:
 
 - Bumblebee: the Gemma 4 text model, on branch [`gemma4`](https://github.com/rodrigues/bumblebee/tree/gemma4) of rodrigues/bumblebee ([`bumblebee.patch`](bumblebee/bumblebee.patch)).
-- safetensors: loading tensors over 2 GiB on macOS, [elixir-nx/safetensors#16](https://github.com/elixir-nx/safetensors/pull/16) ([`safetensors.patch`](safetensors/safetensors.patch)).
+- safetensors: loading tensors over 2 GiB on macOS, [elixir-nx/safetensors#16](https://github.com/elixir-nx/safetensors/pull/16), merged on 2026-11-21 as f381d95 and not in a release yet ([`safetensors.patch`](safetensors/safetensors.patch)).
 
 Every result is in an `outputs/` folder, so nothing needs running to read it; [Reproduce](#reproduce), at the end, reruns everything.
 All runs were on macOS (Apple silicon, 64 GiB), with Elixir 1.20.5 and OTP 29.1.2.

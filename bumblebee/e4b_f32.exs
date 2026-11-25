@@ -3,7 +3,7 @@
 # BUMBLEBEE_PATH=path/to/bumblebee OUT=outputs/e4b-f32-gemma4.json elixir e4b_f32.exs
 Mix.install([
   {:bumblebee, path: System.fetch_env!("BUMBLEBEE_PATH")},
-  {:safetensors, github: "elixir-nx/safetensors", branch: "main", override: true},
+  {:safetensors, github: "elixir-nx/safetensors", ref: "f381d95", override: true},
   {:exla, "1.0.0"},
   {:fine, "0.1.6", override: true},
   {:nx, "~> 1.0", override: true},

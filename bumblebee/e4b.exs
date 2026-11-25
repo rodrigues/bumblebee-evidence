@@ -3,7 +3,7 @@
 Mix.install([
   {:bumblebee, path: System.fetch_env!("BUMBLEBEE_PATH")},
   # Loading tensors over 2 GiB on macOS, see the safetensors folder
-  {:safetensors, github: "rodrigues/safetensors", branch: "large-tensors", override: true},
+  {:safetensors, github: "elixir-nx/safetensors", ref: "f381d95", override: true},
   {:emlx, github: "elixir-nx/emlx", ref: "d5c78ae5", sparse: "emlx"},
   {:fine, "0.1.6", override: true},
   {:nx, "~> 1.0", override: true},
