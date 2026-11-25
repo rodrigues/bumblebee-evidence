@@ -181,10 +181,10 @@ index 4c8972b..f67757c 100644
          eos: "</s>",
 diff --git a/lib/bumblebee/text/tiktoken.ex b/lib/bumblebee/text/tiktoken.ex
 new file mode 100644
-index 0000000..edc56fb
+index 0000000..1d6f805
 --- /dev/null
 +++ b/lib/bumblebee/text/tiktoken.ex
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,167 @@
 +defmodule Bumblebee.Text.Tiktoken do
 +  @moduledoc false
 +
@@ -218,24 +218,26 @@ index 0000000..edc56fb
 +  """
 +  @spec tokenizer_json(Path.t(), atom(), map()) :: map()
 +  def tokenizer_json(path, type, tokenizer_config) do
++    known_types = Map.keys(@patterns)
++
 +    pattern =
 +      @patterns[type] ||
 +        raise ArgumentError,
 +              "converting a tiktoken vocabulary needs the split pattern of the tokenizer," <>
-+                " which is known only for the types #{inspect(Map.keys(@patterns))}, got: #{inspect(type)}"
++                " which is known only for the types #{inspect(known_types)}, got: #{inspect(type)}"
 +
 +    ranks = read_ranks(path)
 +    to_unicode = byte_to_unicode()
-+    to_string = fn bytes -> for <<byte <- bytes>>, into: "", do: Map.fetch!(to_unicode, byte) end
++    encode = fn bytes -> for <<byte <- bytes>>, into: "", do: Map.fetch!(to_unicode, byte) end
 +
-+    vocab = Map.new(ranks, fn {bytes, rank} -> {to_string.(bytes), rank} end)
++    vocab = Map.new(ranks, fn {bytes, rank} -> {encode.(bytes), rank} end)
 +
 +    merges =
 +      ranks
 +      |> Enum.sort_by(&elem(&1, 1))
 +      |> Enum.flat_map(fn {bytes, rank} -> token_merges(bytes, rank, ranks) end)
 +      |> Enum.sort_by(&elem(&1, 2))
-+      |> Enum.map(fn {left, right, _rank} -> [to_string.(left), to_string.(right)] end)
++      |> Enum.map(fn {left, right, _rank} -> [encode.(left), encode.(right)] end)
 +
 +    configured =
 +      Map.new(tokenizer_config["added_tokens_decoder"] || %{}, fn {id, token} ->

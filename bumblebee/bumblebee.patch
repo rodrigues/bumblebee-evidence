@@ -10,106 +10,12 @@ index e554e22..ea74ab0 100644
      "Llama4ForCausalLM" => {Bumblebee.Text.Llama4, :for_causal_language_modeling},
      "Llama4ForConditionalGeneration" => {Bumblebee.Text.Llama4, :for_causal_language_modeling},
      "Llama4TextModel" => {Bumblebee.Text.Llama4, :base},
-diff --git a/lib/bumblebee/layers.ex b/lib/bumblebee/layers.ex
-index 9b0e82f..88c8cfe 100644
---- a/lib/bumblebee/layers.ex
-+++ b/lib/bumblebee/layers.ex
-@@ -30,7 +30,7 @@ defmodule Bumblebee.Layers do
-   end
- 
-   @doc false
--  def mixture_of_experts_impl(x, router_logits, gate, intermediate, output, opts) do
-+  def mixture_of_experts_impl(x, router_logits, gate, intermediate, output, selection_bias, opts) do
-     {batch_size, sequence_length, hidden_size} = Nx.shape(x)
-     num_tokens = batch_size * sequence_length
-     num_experts = Nx.axis_size(gate, 0)
-@@ -46,13 +46,23 @@ defmodule Bumblebee.Layers do
-         :sigmoid -> Axon.Activations.sigmoid(router_logits)
-       end
- 
--    {weights, experts} = Nx.top_k(scores, k: k)
-+    {weights, experts} =
-+      case selection_bias do
-+        %Axon.None{} ->
-+          Nx.top_k(scores, k: k)
-+
-+        selection_bias ->
-+          {_, experts} = Nx.top_k(Nx.add(scores, Nx.as_type(selection_bias, :f32)), k: k)
-+          {Nx.take_along_axis(scores, experts, axis: 1), experts}
-+      end
- 
-     weights =
-       if opts[:normalize_top_k],
-         do: Nx.divide(weights, Nx.sum(weights, axes: [-1], keep_axes: true)),
-         else: weights
- 
-+    weights = Nx.multiply(weights, opts[:output_scale])
-+
-     weights = Nx.as_type(weights, Nx.type(x))
-     activation = activation_fun(opts[:activation])
- 
-diff --git a/lib/bumblebee/layers/transformer.ex b/lib/bumblebee/layers/transformer.ex
-index b9b64ba..a61f65d 100644
---- a/lib/bumblebee/layers/transformer.ex
-+++ b/lib/bumblebee/layers/transformer.ex
-@@ -315,6 +315,13 @@ defmodule Bumblebee.Layers.Transformer do
-     * `:weight_inputs` - whether to multiply each expert's input by its
-       weight, instead of its output. Defaults to `false`
- 
-+    * `:selection_bias` - whether to add a learned bias to the expert
-+      weights when choosing the experts, but not when weighting them.
-+      Defaults to `false`
-+
-+    * `:output_scale` - the factor applied to the expert weights after
-+      normalization. Defaults to `1.0`
-+
-     * `:kernel_initializer` - initializer for kernel weights. Defaults
-       to `:glorot_uniform`
- 
-@@ -329,6 +336,8 @@ defmodule Bumblebee.Layers.Transformer do
-         router_activation: :softmax,
-         normalize_top_k: true,
-         weight_inputs: false,
-+        selection_bias: false,
-+        output_scale: 1.0,
-         kernel_initializer: :glorot_uniform
-       ])
- 
-@@ -357,15 +366,26 @@ defmodule Bumblebee.Layers.Transformer do
-     output =
-       kernel.("output_kernel", fn _, _ -> {num_experts, output_size, intermediate_size} end)
- 
-+    # Parameter shapes are functions of the other inputs, so an absent
-+    # bias is not an input
-+    {impl, selection_bias} =
-+      if opts[:selection_bias] do
-+        {&Layers.mixture_of_experts_impl/7,
-+         [Axon.param("selection_bias", fn _, _ -> {num_experts} end, initializer: :zeros)]}
-+      else
-+        {&Layers.mixture_of_experts_impl(&1, &2, &3, &4, &5, %Axon.None{}, &6), []}
-+      end
-+
-     Axon.layer(
--      &Layers.mixture_of_experts_impl/6,
--      [x, router_logits, gate, intermediate, output],
-+      impl,
-+      [x, router_logits, gate, intermediate, output] ++ selection_bias,
-       name: join(name, "experts"),
-       num_experts_per_token: opts[:num_experts_per_token],
-       activation: opts[:activation],
-       router_activation: opts[:router_activation],
-       normalize_top_k: opts[:normalize_top_k],
-       weight_inputs: opts[:weight_inputs],
-+      output_scale: opts[:output_scale],
-       op_name: :mixture_of_experts
-     )
-   end
 diff --git a/lib/bumblebee/text/kimi_linear.ex b/lib/bumblebee/text/kimi_linear.ex
 new file mode 100644
-index 0000000..947a8ac
+index 0000000..ac63d4b
 --- /dev/null
 +++ b/lib/bumblebee/text/kimi_linear.ex
-@@ -0,0 +1,1079 @@
+@@ -0,0 +1,1128 @@
 +defmodule Bumblebee.Text.KimiLinear do
 +  alias Bumblebee.Shared
 +
@@ -402,12 +308,12 @@ index 0000000..947a8ac
 +
 +  defp core(inputs, spec) do
 +    embeddings =
-+      Layers.default inputs["input_embeddings"] do
-+        Axon.embedding(inputs["input_ids"], spec.vocab_size, spec.hidden_size,
-+          kernel_initializer: kernel_initializer(spec),
-+          name: "embedder.token_embedding"
-+        )
-+      end
++      embedder(
++        inputs["input_ids"],
++        inputs["input_embeddings"],
++        spec,
++        name: "embedder"
++      )
 +
 +    decoder_outputs =
 +      decoder(embeddings, inputs["attention_mask"], inputs["cache"], spec, name: "decoder")
@@ -424,6 +330,17 @@ index 0000000..947a8ac
 +      attentions: decoder_outputs.attentions,
 +      cache: decoder_outputs.cache
 +    }
++  end
++
++  defp embedder(input_ids, input_embeddings, spec, opts) do
++    name = opts[:name]
++
++    Layers.default input_embeddings do
++      Axon.embedding(input_ids, spec.vocab_size, spec.hidden_size,
++        kernel_initializer: kernel_initializer(spec),
++        name: join(name, "token_embedding")
++      )
++    end
 +  end
 +
 +  defp decoder(hidden_state, attention_mask, cache, spec, opts) do
@@ -988,18 +905,34 @@ index 0000000..947a8ac
 +  defp experts(hidden_state, spec, opts) do
 +    name = opts[:name]
 +
++    router_logits =
++      Axon.dense(hidden_state, spec.num_experts,
++        use_bias: false,
++        kernel_initializer: kernel_initializer(spec),
++        name: join(name, "router")
++      )
++
++    selection_bias = Axon.param("selection_bias", {spec.num_experts}, initializer: :zeros)
++
++    {weights, experts} =
++      Axon.layer(&route/3, [router_logits, selection_bias],
++        name: join(name, "routing"),
++        num_experts_per_token: spec.num_experts_per_token,
++        normalize_top_k: spec.normalize_top_k,
++        output_scale: spec.expert_output_scale,
++        op_name: :route
++      )
++      |> Layers.unwrap_tuple(2)
++
 +    routed =
 +      Layers.Transformer.mixture_of_experts(
 +        hidden_state,
++        weights,
++        experts,
 +        spec.expert_intermediate_size,
 +        spec.hidden_size,
 +        num_experts: spec.num_experts,
-+        num_experts_per_token: spec.num_experts_per_token,
 +        activation: spec.activation,
-+        router_activation: :sigmoid,
-+        normalize_top_k: spec.normalize_top_k,
-+        selection_bias: true,
-+        output_scale: spec.expert_output_scale,
 +        kernel_initializer: kernel_initializer(spec),
 +        name: name
 +      )
@@ -1015,6 +948,26 @@ index 0000000..947a8ac
 +      )
 +
 +    Axon.add(routed, shared)
++  end
++
++  # The selection bias only chooses the experts, and their weights come
++  # from the scores without it
++  defnp route(router_logits, selection_bias, opts \\ []) do
++    opts =
++      keyword!(opts, [:num_experts_per_token, :normalize_top_k, :output_scale, mode: :inference])
++
++    scores = Axon.Activations.sigmoid(Nx.as_type(router_logits, :f32))
++    biased_scores = scores + Nx.as_type(selection_bias, :f32)
++    {_, experts} = Nx.top_k(biased_scores, k: opts[:num_experts_per_token])
++    weights = Nx.take_along_axis(scores, experts, axis: 2)
++
++    weights =
++      case opts[:normalize_top_k] do
++        true -> weights / Nx.sum(weights, axes: [-1], keep_axes: true)
++        false -> weights
++      end
++
++    {weights * opts[:output_scale], experts}
 +  end
 +
 +  defp layer_types(spec) do
@@ -1170,7 +1123,9 @@ index 0000000..947a8ac
 +        "decoder.blocks.{n}.ffn.experts" => %{
 +          "gate_kernel" => stack.("w1", "gate_proj"),
 +          "intermediate_kernel" => stack.("w3", "up_proj"),
-+          "output_kernel" => stack.("w2", "down_proj"),
++          "output_kernel" => stack.("w2", "down_proj")
++        },
++        "decoder.blocks.{n}.ffn.routing" => %{
 +          "selection_bias" =>
 +            {[
 +               [
@@ -1189,72 +1144,6 @@ index 0000000..947a8ac
 +    end
 +  end
 +end
-diff --git a/test/bumblebee/layers/mixture_of_experts_test.exs b/test/bumblebee/layers/mixture_of_experts_test.exs
-index 92f3ab0..15ae0a1 100644
---- a/test/bumblebee/layers/mixture_of_experts_test.exs
-+++ b/test/bumblebee/layers/mixture_of_experts_test.exs
-@@ -21,7 +21,8 @@ defmodule Bumblebee.Layers.MixtureOfExpertsTest do
-       gate,
-       intermediate,
-       output,
--      [num_experts_per_token: 2, activation: :silu] ++ opts
-+      %Axon.None{},
-+      [num_experts_per_token: 2, activation: :silu, output_scale: 1.0] ++ opts
-     )
-   end
- 
-@@ -80,4 +81,51 @@ defmodule Bumblebee.Layers.MixtureOfExpertsTest do
-       assert_all_close(changed_output[[0, 0]], output[[0, 0]])
-     end
-   end
-+
-+  test "the selection bias chooses the experts and the output scale multiplies their weights" do
-+    key = Nx.Random.key(0)
-+    {x, key} = Nx.Random.normal(key, shape: {1, 1, 4})
-+    {gate, intermediate, output} = kernels(key)
-+    # Experts 0 and 2 score highest, but the bias makes experts 1 and 3 the chosen ones
-+    router_logits = Nx.tensor([[[2.0, 0.0, 1.0, -1.0]]])
-+    selection_bias = Nx.tensor([0.0, 1.0, 0.0, 1.0])
-+
-+    result =
-+      Bumblebee.Layers.mixture_of_experts_impl(
-+        x,
-+        router_logits,
-+        gate,
-+        intermediate,
-+        output,
-+        selection_bias,
-+        num_experts_per_token: 2,
-+        activation: :silu,
-+        router_activation: :sigmoid,
-+        normalize_top_k: true,
-+        weight_inputs: false,
-+        output_scale: 2.5
-+      )
-+
-+    # The weights come from the sigmoid scores of the chosen experts, without the bias
-+    scores = Axon.Activations.sigmoid(Nx.tensor([0.0, -1.0]))
-+    weights = scores |> Nx.divide(Nx.sum(scores)) |> Nx.multiply(2.5)
-+
-+    expected =
-+      [1, 3]
-+      |> Enum.with_index()
-+      |> Enum.map(fn {expert, i} ->
-+        input = x[[0, 0]]
-+
-+        hidden =
-+          Nx.multiply(
-+            Axon.Activations.silu(Nx.dot(gate[expert], input)),
-+            Nx.dot(intermediate[expert], input)
-+          )
-+
-+        Nx.multiply(Nx.dot(output[expert], hidden), weights[i])
-+      end)
-+      |> Enum.reduce(&Nx.add/2)
-+
-+    assert_all_close(result[[0, 0]], expected)
-+  end
- end
 diff --git a/test/bumblebee/text/kimi_linear_test.exs b/test/bumblebee/text/kimi_linear_test.exs
 new file mode 100644
 index 0000000..4d05104

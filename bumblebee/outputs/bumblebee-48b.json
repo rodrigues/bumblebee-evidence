@@ -104,7 +104,7 @@
         163586,
         163586
       ],
-      "prefill_ms": 95.5,
+      "prefill_ms": 97.2,
       "teacher_forced_argmax": [
         1008,
         10484,
@@ -209,7 +209,7 @@
       ]
     },
     "story": {
-      "decode_ms_per_token": 13.4,
+      "decode_ms_per_token": 13.7,
       "generated": [
         1008,
         116644,
@@ -312,7 +312,7 @@
         743,
         8691
       ],
-      "prefill_ms": 83.1,
+      "prefill_ms": 84.0,
       "teacher_forced_argmax": [
         1008,
         116644,

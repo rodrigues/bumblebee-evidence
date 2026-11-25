@@ -9,7 +9,7 @@ local_test=test/bumblebee/text/kimi_linear_local_test.exs
 sed -e "s/KimiLinearTest do/KimiLinearLocalTest do/" \
   -e "s|{:hf, \"bumblebee-testing/\([^\"]*\)\"}|{:local, \"$here/checkpoints/\1\"}|" \
   test/bumblebee/text/kimi_linear_test.exs > "$local_test"
-mix test "$local_test" test/bumblebee/layers/mixture_of_experts_test.exs 2>&1 |
+mix test "$local_test" test/bumblebee/layers_test.exs 2>&1 |
   grep -E '^\s+[0-9]+\) test|^Finished|^Result|\*\* \(' > "$here/outputs/tests.txt" || true
 rm -f "$local_test"
 cat "$here/outputs/tests.txt"
