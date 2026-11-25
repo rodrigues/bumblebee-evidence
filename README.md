@@ -56,6 +56,8 @@ The conversion has no chat template, so the scripts use the one from `google/gem
 The templates of the smaller Gemma 4 models do not close the thinking channel when thinking is off, and mlx-lm renders the template with thinking on unless told otherwise; with either, the model starts by thinking.
 The EMLX used is the `compiled-while-body` branch.
 
+[`e4b_f32.exs`](bumblebee/e4b_f32.exs) runs `google/gemma-4-E4B-it` in f32 on EXLA from `gemma4` and from `gemma4-mlx`, and both answer "The capital of France is Paris." ([`e4b-f32-gemma4.json`](bumblebee/outputs/e4b-f32-gemma4.json), [`e4b-f32-gemma4-mlx.json`](bumblebee/outputs/e4b-f32-gemma4-mlx.json)), so the MLX quantized loading leaves the unquantized model's output unchanged.
+
 ## Model initialization
 
 The decoder's blocks get the results of earlier blocks as an argument of the block function.
