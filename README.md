@@ -34,6 +34,25 @@ The Bumblebee test file on the branch checks the same values, and passes on EXLA
 - The tokenizer is detected as `:gemma`, and its ids match transformers' ([`tokenizer.py`](bumblebee/tokenizer.py), [`tokenizer-reference.json`](bumblebee/outputs/tokenizer-reference.json)).
 - Greedy generation answers "The capital of France is Paris." and "A capital do Brasil é Brasília."
 
+## A real checkpoint: 31B in 4 bits
+
+[`reference_31b.py`](bumblebee/reference_31b.py) decodes 30 tokens greedily in mlx-lm 0.32.2 with the MLX 4-bit conversion of Gemma 4 31B, the target model of `Youssofal/Gemma4-MTPLX-Optimized-Speed`, from two chat prompts with thinking off.
+[`bumblebee_31b.exs`](bumblebee/bumblebee_31b.exs) does the same in Bumblebee on EMLX, from the `gemma4-mlx` branch, which adds the MLX quantized loading of `mlx-quantized` to `gemma4` ([`results-31b.md`](bumblebee/outputs/results-31b.md)):
+
+| Prompt | 30 greedy tokens | Same top choice as mlx-lm, teacher forced | Bumblebee per token | mlx-lm per token |
+|---|---|---|---|---|
+| capital | identical | 30 of 30 | 78.9 ms | 75.9 ms |
+| story | identical | 30 of 30 | 78.6 ms | 74.7 ms |
+
+- The tokenizer gives the same ids as mlx-lm for both prompts.
+- The checkpoint loads in 2.0 s with no missing parameters, no shape mismatches and no unused tensors.
+- Bumblebee holds 18.06 GB after loading and peaks at 20.88 GB while generating; mlx-lm holds 17.27 GB and peaks at 17.62 GB.
+- From a prompt of 1,271 tokens, longer than the sliding window of 1,024, 30 tokens generated with the cache are identical to those from running the full sequence for each token.
+
+The conversion has no chat template, so the scripts use the one from `google/gemma-4-31B-it`.
+The templates of the smaller Gemma 4 models do not close the thinking channel when thinking is off, and mlx-lm renders the template with thinking on unless told otherwise; with either, the model starts by thinking.
+The EMLX used is the `compiled-while-body` branch.
+
 ## Model initialization
 
 The decoder's blocks get the results of earlier blocks as an argument of the block function.
@@ -51,7 +70,7 @@ The safetensors test suite passes ([`tests.txt`](safetensors/outputs/tests.txt))
 ## Not checked
 
 - Linux and Windows.
-- The real E2B, 12B and 31B checkpoints; the keys-as-values path of 31B and 12B is covered by the tiny checkpoint only.
+- The real E2B and 12B checkpoints, and 31B in bfloat16 against transformers, which does not fit.
 - 12B's architecture, `Gemma4UnifiedForConditionalGeneration`, which Bumblebee does not map.
 - The mixture-of-experts 26B-A4B, which Bumblebee refuses on load, and the vision and audio towers.
 
@@ -70,3 +89,11 @@ cd ../safetensors
 ```
 
 `e4b.exs` needs macOS for EMLX and about 30 GB of memory.
+
+The 31B scripts need the conversion and the 31B chat template, and `MLX_ENABLE_TF32=0` in the shell:
+
+```sh
+export MLX_ENABLE_TF32=0 GEMMA4_31B_PATH=path/to/target GEMMA4_TEMPLATE_PATH=path/to/gemma-4-31B-it/chat_template.jinja
+uv run reference_31b.py
+BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_31b.exs
+```
