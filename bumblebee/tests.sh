@@ -11,7 +11,7 @@ sed -e "s/Llama4Test do/Llama4LocalTest do/" \
   -e "s|{\"bumblebee-testing/\(tiny[^\"]*\)\",|{\"$here/checkpoints/\1\",|" \
   -e "s|{:hf, unquote(repo)}|{:local, unquote(repo)}|" \
   test/bumblebee/text/llama4_test.exs > "$local_test"
-mix test "$local_test" test/bumblebee/layers/mixture_of_experts_test.exs 2>&1 |
+mix test "$local_test" test/bumblebee/layers_test.exs 2>&1 |
   grep -E '^\s+[0-9]+\) test|^Finished|^Result|\*\* \(' > "$here/outputs/tests.txt" || true
 rm -f "$local_test"
 cat "$here/outputs/tests.txt"
