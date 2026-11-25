@@ -6,6 +6,6 @@ Parameter log: ["the following PyTorch parameters were unused:"] %{"multi_modal_
 
 | Prompt | Bumblebee output | Greedy tokens | Same top choice, teacher forced | Largest logit difference, first 3 positions by 5 | Time per token, incl. prefill |
 |---|---|---|---|---|---|
-| benign | "\n\nsafe" | identical | 3 of 3 | 0.5 | 136.9 ms |
-| continuation | "" | identical | 1 of 1 | 0.4375 | 126.2 ms |
-| lockpicking | "\n\nunsafe\nS2" | identical | 6 of 6 | 0.25 | 108.0 ms |
+| benign | "\n\nsafe" | identical | 3 of 3 | 0.5 | 137.2 ms |
+| continuation | "" | identical | 1 of 1 | 0.4375 | 120.9 ms |
+| lockpicking | "\n\nunsafe\nS2" | identical | 6 of 6 | 0.25 | 109.6 ms |
