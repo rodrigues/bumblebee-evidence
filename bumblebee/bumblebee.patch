@@ -1,0 +1,702 @@
+diff --git a/lib/bumblebee.ex b/lib/bumblebee.ex
+index bae8377..8933ba0 100644
+--- a/lib/bumblebee.ex
++++ b/lib/bumblebee.ex
+@@ -210,6 +210,8 @@ defmodule Bumblebee do
+     "Phi3ForTokenClassification" => {Bumblebee.Text.Phi3, :for_token_classification},
+     "Qwen3Model" => {Bumblebee.Text.Qwen3, :base},
+     "Qwen3ForCausalLM" => {Bumblebee.Text.Qwen3, :for_causal_language_modeling},
++    "Qwen3MoeModel" => {Bumblebee.Text.Qwen3, :base},
++    "Qwen3MoeForCausalLM" => {Bumblebee.Text.Qwen3, :for_causal_language_modeling},
+     "Qwen3ForSequenceClassification" => {Bumblebee.Text.Qwen3, :for_sequence_classification},
+     "ResNetForImageClassification" => {Bumblebee.Vision.ResNet, :for_image_classification},
+     "ResNetModel" => {Bumblebee.Vision.ResNet, :base},
+@@ -302,6 +304,7 @@ defmodule Bumblebee do
+     "phi" => :code_gen,
+     "phi3" => :llama,
+     "qwen3" => :qwen2,
++    "qwen3_moe" => :qwen2,
+     "roberta" => :roberta,
+     "smollm3" => :smollm3,
+     "t5" => :t5,
+diff --git a/lib/bumblebee/conversion/mlx_quantization.ex b/lib/bumblebee/conversion/mlx_quantization.ex
+index 3220a5b..4557dca 100644
+--- a/lib/bumblebee/conversion/mlx_quantization.ex
++++ b/lib/bumblebee/conversion/mlx_quantization.ex
+@@ -61,13 +61,17 @@ defmodule Bumblebee.Conversion.MLXQuantization do
+       {biases, state} = Map.pop!(state, prefix <> ".biases")
+ 
+       %{"bits" => bits, "group_size" => group_size} = layer_quantization(quantization, prefix)
+-      {out_features, num_groups} = lazy_shape(scales)
++
++      # Groups run along the last axis, and leading axes, such as stacked experts, are kept
++      scales_shape = lazy_shape(scales)
++      last_axis = tuple_size(scales_shape) - 1
++      shape = put_elem(scales_shape, last_axis, elem(scales_shape, last_axis) * group_size)
+ 
+       quantized = %QuantizedTensor{
+         weight: weight,
+         scales: scales,
+         biases: biases,
+-        shape: {out_features, num_groups * group_size},
++        shape: shape,
+         bits: bits,
+         group_size: group_size
+       }
+diff --git a/lib/bumblebee/conversion/pytorch_params.ex b/lib/bumblebee/conversion/pytorch_params.ex
+index fbc7b49..61c06e3 100644
+--- a/lib/bumblebee/conversion/pytorch_params.ex
++++ b/lib/bumblebee/conversion/pytorch_params.ex
+@@ -132,12 +132,26 @@ defmodule Bumblebee.Conversion.PyTorchParams do
+             {sources, builder_fun, keep_quantized?} =
+               case params_source do
+                 %{} = param_builders ->
+-                  if param_builder = param_builders[param.name] do
+-                    {sources, builder_fun} = param_builder
+-                    {sources, builder_fun, false}
+-                  else
+-                    raise "no matching mapping found for parameter #{inspect(param.name)} in #{inspect(param_builders)}"
+-                  end
++                  {sources, builder_fun} =
++                    case param_builders[param.name] do
++                      nil ->
++                        raise "no matching mapping found for parameter #{inspect(param.name)} in #{inspect(param_builders)}"
++
++                      # Alternative builders, for checkpoints that store the
++                      # parameter differently, the first one found is used
++                      [_ | _] = param_builders ->
++                        Enum.find(param_builders, hd(param_builders), fn {sources, _} ->
++                          Enum.all?(sources, &source_found?(pytorch_state, &1))
++                        end)
++
++                      param_builder ->
++                        param_builder
++                    end
++
++                  # Expert kernels are multiplied by gathering quantized weights
++                  keep_quantized? = layer.op_name == :mixture_of_experts
++
++                  {sources, builder_fun, keep_quantized?}
+ 
+                 source_layer_name
+                 when is_binary(source_layer_name) or
+@@ -535,6 +549,14 @@ defmodule Bumblebee.Conversion.PyTorchParams do
+     Utils.Nx.map(expr, &Nx.shape/1)
+   end
+ 
++  defp source_found?(pytorch_state, source) do
++    source
++    |> List.wrap()
++    |> Enum.any?(fn {layer_name, param_name} ->
++      lookup_param(pytorch_state, layer_name, param_name) != nil
++    end)
++  end
++
+   defp ensure_type(param_expr, value) do
+     Utils.Nx.zip_with(param_expr, value, fn expr, tensor ->
+       case {Nx.type(expr), Nx.type(tensor)} do
+diff --git a/lib/bumblebee/huggingface/transformers/utils.ex b/lib/bumblebee/huggingface/transformers/utils.ex
+index 911a3c1..7ea7043 100644
+--- a/lib/bumblebee/huggingface/transformers/utils.ex
++++ b/lib/bumblebee/huggingface/transformers/utils.ex
+@@ -30,19 +30,12 @@ defmodule Bumblebee.HuggingFace.Transformers.Utils do
+           (String.t() -> String.t())
+         ) :: Transformers.Model.params_source()
+   def map_params_source_layer_names(%{} = param_builders, fun) do
+-    Map.new(param_builders, fn {param_name, {sources, builder_fun}} ->
+-      sources =
+-        for ref_or_refs <- sources do
+-          case ref_or_refs do
+-            {layer_name, param_name} ->
+-              {fun.(layer_name), param_name}
+-
+-            refs ->
+-              for {layer_name, param_name} <- refs, do: {fun.(layer_name), param_name}
+-          end
+-        end
++    Map.new(param_builders, fn
++      {param_name, builders} when is_list(builders) ->
++        {param_name, Enum.map(builders, &map_builder_source_layer_names(&1, fun))}
+ 
+-      {param_name, {sources, builder_fun}}
++      {param_name, builder} ->
++        {param_name, map_builder_source_layer_names(builder, fun)}
+     end)
+   end
+ 
+@@ -53,4 +46,19 @@ defmodule Bumblebee.HuggingFace.Transformers.Utils do
+   def map_params_source_layer_names(layer_name, fun) when is_binary(layer_name) do
+     fun.(layer_name)
+   end
++
++  defp map_builder_source_layer_names({sources, builder_fun}, fun) do
++    sources =
++      for ref_or_refs <- sources do
++        case ref_or_refs do
++          {layer_name, param_name} ->
++            {fun.(layer_name), param_name}
++
++          refs ->
++            for {layer_name, param_name} <- refs, do: {fun.(layer_name), param_name}
++        end
++      end
++
++    {sources, builder_fun}
++  end
+ end
+diff --git a/lib/bumblebee/layers.ex b/lib/bumblebee/layers.ex
+index 671b535..0681fa5 100644
+--- a/lib/bumblebee/layers.ex
++++ b/lib/bumblebee/layers.ex
+@@ -29,6 +29,85 @@ defmodule Bumblebee.Layers do
+     end
+   end
+ 
++  @doc false
++  def mixture_of_experts_impl(x, router_logits, gate, intermediate, output, opts) do
++    {batch_size, sequence_length, hidden_size} = Nx.shape(x)
++    num_tokens = batch_size * sequence_length
++    num_experts = Nx.axis_size(gate, 0)
++    k = opts[:num_experts_per_token]
++
++    x = Nx.reshape(x, {num_tokens, hidden_size})
++
++    probabilities =
++      router_logits
++      |> Nx.reshape({num_tokens, num_experts})
++      |> Nx.as_type(:f32)
++      |> Axon.Activations.softmax(axis: -1)
++
++    {weights, experts} = Nx.top_k(probabilities, k: k)
++
++    weights =
++      if opts[:normalize_top_k],
++        do: Nx.divide(weights, Nx.sum(weights, axes: [-1], keep_axes: true)),
++        else: weights
++
++    weights = Nx.as_type(weights, Nx.type(x))
++    activation = activation_fun(opts[:activation])
++
++    # Gathering the chosen experts reads k experts per token, while
++    # computing every expert reads each expert once, so the cheaper one
++    # depends on the number of tokens. Quantized kernels are always
++    # gathered, which backends can do without unpacking them
++    output =
++      if num_tokens * k <= num_experts or Nx.Type.integer?(Nx.type(gate)) do
++        routed_experts(x, weights, experts, gate, intermediate, output, activation)
++      else
++        all_experts(x, weights, experts, gate, intermediate, output, activation)
++      end
++
++    Nx.reshape(output, {batch_size, sequence_length, :auto})
++  end
++
++  defp routed_experts(x, weights, experts, gate, intermediate, output, activation) do
++    {num_tokens, k} = Nx.shape(experts)
++    experts = Nx.reshape(experts, {num_tokens * k})
++    x = x |> Nx.new_axis(1) |> Nx.broadcast({num_tokens, k, Nx.axis_size(x, 1)})
++    x = Nx.reshape(x, {num_tokens * k, :auto})
++
++    project = fn x, kernel -> Nx.dot(x, [1], [0], Nx.take(kernel, experts), [2], [0]) end
++    hidden = Nx.multiply(activation.(project.(x, gate)), project.(x, intermediate))
++
++    hidden
++    |> project.(output)
++    |> Nx.reshape({num_tokens, k, :auto})
++    |> Nx.multiply(Nx.new_axis(weights, -1))
++    |> Nx.sum(axes: [1])
++  end
++
++  defp all_experts(x, weights, experts, gate, intermediate, output, activation) do
++    num_experts = Nx.axis_size(gate, 0)
++
++    # The router weights of every expert, zero for the experts not chosen
++    expert_weights =
++      Nx.equal(Nx.new_axis(experts, -1), Nx.iota({1, 1, num_experts}))
++      |> Nx.multiply(Nx.new_axis(weights, -1))
++      |> Nx.sum(axes: [1])
++
++    project = fn x, kernel -> Nx.dot(x, [1], kernel, [2]) end
++    hidden = Nx.multiply(activation.(project.(x, gate)), project.(x, intermediate))
++
++    hidden
++    |> Nx.transpose(axes: [1, 0, 2])
++    |> Nx.dot([2], [0], output, [2], [0])
++    |> Nx.multiply(expert_weights |> Nx.transpose() |> Nx.new_axis(-1))
++    |> Nx.sum(axes: [0])
++  end
++
++  defp activation_fun(activation) when activation in @unsupported_activations,
++    do: &apply(__MODULE__, activation, [&1, []])
++
++  defp activation_fun(activation), do: &apply(Axon.Activations, activation, [&1])
++
+   @doc """
+   Implements the GeLU activation approximated with tanh.
+ 
+diff --git a/lib/bumblebee/layers/transformer.ex b/lib/bumblebee/layers/transformer.ex
+index 525f5de..f9529a3 100644
+--- a/lib/bumblebee/layers/transformer.ex
++++ b/lib/bumblebee/layers/transformer.ex
+@@ -286,6 +286,79 @@ defmodule Bumblebee.Layers.Transformer do
+     |> dense.(output_size, join(name, "output"))
+   end
+ 
++  @doc """
++  Adds a mixture-of-experts feed-forward block to the network.
++
++  A router picks `:num_experts_per_token` of `:num_experts` gated
++  feed-forward networks for each token, and the block returns the sum
++  of their outputs weighted by the router probabilities.
++
++  ## Options
++
++    * `:name` - the prefix for layer names
++
++    * `:num_experts` - the number of experts
++
++    * `:num_experts_per_token` - the number of experts each token is
++      routed to
++
++    * `:activation` - the activation used in the gated experts.
++      Defaults to `:silu`
++
++    * `:normalize_top_k` - whether to normalize the probabilities of
++      the chosen experts to sum to 1. Defaults to `true`
++
++    * `:kernel_initializer` - initializer for kernel weights. Defaults
++      to `:glorot_uniform`
++
++  """
++  def mixture_of_experts(x, intermediate_size, output_size, opts) do
++    opts =
++      Keyword.validate!(opts, [
++        :name,
++        :num_experts,
++        :num_experts_per_token,
++        activation: :silu,
++        normalize_top_k: true,
++        kernel_initializer: :glorot_uniform
++      ])
++
++    name = opts[:name]
++    num_experts = opts[:num_experts]
++
++    router_logits =
++      Axon.dense(x, num_experts,
++        use_bias: false,
++        kernel_initializer: opts[:kernel_initializer],
++        name: join(name, "router")
++      )
++
++    kernel = fn param_name, shape_fun ->
++      Axon.param(param_name, shape_fun, initializer: opts[:kernel_initializer])
++    end
++
++    # Expert kernels are {num_experts, out, in}, as in the checkpoints
++    input_kernel_shape = fn input_shape, _ ->
++      {num_experts, intermediate_size, elem(input_shape, tuple_size(input_shape) - 1)}
++    end
++
++    gate = kernel.("gate_kernel", input_kernel_shape)
++    intermediate = kernel.("intermediate_kernel", input_kernel_shape)
++
++    output =
++      kernel.("output_kernel", fn _, _ -> {num_experts, output_size, intermediate_size} end)
++
++    Axon.layer(
++      &Layers.mixture_of_experts_impl/6,
++      [x, router_logits, gate, intermediate, output],
++      name: join(name, "experts"),
++      num_experts_per_token: opts[:num_experts_per_token],
++      activation: opts[:activation],
++      normalize_top_k: opts[:normalize_top_k],
++      op_name: :mixture_of_experts
++    )
++  end
++
+   @doc """
+   Adds a multi-head attention block to the network.
+ 
+diff --git a/lib/bumblebee/text/qwen3.ex b/lib/bumblebee/text/qwen3.ex
+index a959e9d..3e4326f 100644
+--- a/lib/bumblebee/text/qwen3.ex
++++ b/lib/bumblebee/text/qwen3.ex
+@@ -68,6 +68,34 @@ defmodule Bumblebee.Text.Qwen3 do
+       use_qk_norm: [
+         default: true,
+         doc: "whether to use RMS normalization on query and key projections"
++      ],
++      num_experts: [
++        default: nil,
++        doc: """
++        the number of experts in the mixture-of-experts blocks. When `nil`, every block
++        uses a dense feed-forward network
++        """
++      ],
++      num_experts_per_token: [
++        default: 8,
++        doc: "the number of experts each token is routed to"
++      ],
++      expert_intermediate_size: [
++        default: 768,
++        doc: "the dimensionality of intermediate layers in each expert"
++      ],
++      expert_block_step: [
++        default: 1,
++        doc:
++          "every this many blocks use a mixture-of-experts block, starting from the last of each step"
++      ],
++      dense_block_indices: [
++        default: [],
++        doc: "the indices of blocks that use a dense feed-forward network instead of experts"
++      ],
++      normalize_top_k: [
++        default: true,
++        doc: "whether to normalize the router probabilities of the chosen experts to sum to 1"
+       ]
+     ] ++
+       Shared.common_options([:rotary_embedding_scaling_strategy, :num_labels, :id_to_label]) ++
+@@ -76,6 +104,9 @@ defmodule Bumblebee.Text.Qwen3 do
+   @moduledoc """
+   Qwen3 model family.
+ 
++  This module also covers Qwen3-MoE, where blocks replace the feed-forward
++  network with a mixture of experts, configured by `:num_experts`.
++
+   ## Architectures
+ 
+     * `:base` - plain Qwen3 without any head on top
+@@ -371,10 +402,7 @@ defmodule Bumblebee.Text.Qwen3 do
+         hidden_state =
+           hidden_state
+           |> Layers.rms_norm(epsilon: spec.layer_norm_epsilon, name: join(name, "output_norm"))
+-          |> Layers.Transformer.gated_ffn(spec.intermediate_size, spec.hidden_size,
+-            activation: spec.activation,
+-            name: join(name, "ffn")
+-          )
++          |> ffn(block.index, spec, name: join(name, "ffn"))
+           |> Axon.add(shortcut)
+ 
+         %{
+@@ -386,6 +414,33 @@ defmodule Bumblebee.Text.Qwen3 do
+     )
+   end
+ 
++  defp ffn(hidden_state, index, spec, opts) do
++    if expert_block?(spec, index) do
++      Layers.Transformer.mixture_of_experts(
++        hidden_state,
++        spec.expert_intermediate_size,
++        spec.hidden_size,
++        num_experts: spec.num_experts,
++        num_experts_per_token: spec.num_experts_per_token,
++        normalize_top_k: spec.normalize_top_k,
++        activation: spec.activation,
++        kernel_initializer: kernel_initializer(spec),
++        name: opts[:name]
++      )
++    else
++      Layers.Transformer.gated_ffn(hidden_state, spec.intermediate_size, spec.hidden_size,
++        activation: spec.activation,
++        name: opts[:name]
++      )
++    end
++  end
++
++  @doc false
++  def expert_block?(spec, index) do
++    spec.num_experts != nil and index not in spec.dense_block_indices and
++      rem(index + 1, spec.expert_block_step) == 0
++  end
++
+   defp language_modeling_head(hidden_state, spec, opts) do
+     name = opts[:name]
+ 
+@@ -416,7 +471,13 @@ defmodule Bumblebee.Text.Qwen3 do
+           intermediate_size: {"intermediate_size", number()},
+           activation: {"hidden_act", activation()},
+           initializer_scale: {"initializer_range", number()},
+-          layer_norm_epsilon: {"rms_norm_eps", number()}
++          layer_norm_epsilon: {"rms_norm_eps", number()},
++          num_experts: {"num_experts", number()},
++          num_experts_per_token: {"num_experts_per_tok", number()},
++          expert_intermediate_size: {"moe_intermediate_size", number()},
++          expert_block_step: {"decoder_sparse_step", number()},
++          dense_block_indices: {"mlp_only_layers", list(number())},
++          normalize_top_k: {"norm_topk_prob", boolean()}
+         ) ++
+           Shared.rotary_embedding_options_from_transformers(data) ++
+           Shared.common_options_from_transformers(data, spec)
+@@ -427,7 +488,36 @@ defmodule Bumblebee.Text.Qwen3 do
+ 
+   defimpl Bumblebee.HuggingFace.Transformers.Model do
+     def params_mapping(spec) do
+-      %{
++      experts =
++        if spec.num_experts do
++          # Checkpoints store either one weight per expert, or, as MLX
++          # checkpoints do, all experts stacked in one weight
++          stack = fn projection ->
++            sources =
++              for expert <- 0..(spec.num_experts - 1) do
++                [{"model.layers.{n}.mlp.experts.#{expert}.#{projection}", "weight"}]
++              end
++
++            [
++              {sources, &Nx.stack/1},
++              {[[{"model.layers.{n}.mlp.switch_mlp.#{projection}", "weight"}]],
++               fn [kernel] -> kernel end}
++            ]
++          end
++
++          %{
++            "decoder.blocks.{n}.ffn.router" => "model.layers.{n}.mlp.gate",
++            "decoder.blocks.{n}.ffn.experts" => %{
++              "gate_kernel" => stack.("gate_proj"),
++              "intermediate_kernel" => stack.("up_proj"),
++              "output_kernel" => stack.("down_proj")
++            }
++          }
++        else
++          %{}
++        end
++
++      Map.merge(experts, %{
+         "embedder.token_embedding" => "model.embed_tokens",
+         "decoder.blocks.{n}.self_attention.query" => "model.layers.{n}.self_attn.q_proj",
+         "decoder.blocks.{n}.self_attention.key" => "model.layers.{n}.self_attn.k_proj",
+@@ -444,7 +534,7 @@ defmodule Bumblebee.Text.Qwen3 do
+         "language_modeling_head.output" =>
+           if(spec.tie_word_embeddings, do: "model.embed_tokens", else: "lm_head"),
+         "sequence_classification_head.output" => "score"
+-      }
++      })
+     end
+   end
+ end
+diff --git a/test/bumblebee/conversion/mlx_quantization_test.exs b/test/bumblebee/conversion/mlx_quantization_test.exs
+index a479153..1fbee06 100644
+--- a/test/bumblebee/conversion/mlx_quantization_test.exs
++++ b/test/bumblebee/conversion/mlx_quantization_test.exs
+@@ -9,6 +9,7 @@ defmodule Bumblebee.Conversion.MLXQuantizationTest do
+   @backend {EMLX.Backend, device: :gpu}
+   @repo_4bit {:hf, "bumblebee-testing/tiny-random-Qwen3ForCausalLM-mlx-4bit"}
+   @repo_8bit {:hf, "bumblebee-testing/tiny-random-Qwen3ForCausalLM-mlx-8bit"}
++  @repo_experts {:hf, "bumblebee-testing/tiny-random-Qwen3MoeForCausalLM-mlx-4bit"}
+ 
+   defp predict(model, params) do
+     inputs = %{"input_ids" => Nx.tensor([[10, 20, 30, 40, 50, 60, 70, 80]], backend: @backend)}
+@@ -98,6 +99,36 @@ defmodule Bumblebee.Conversion.MLXQuantizationTest do
+     )
+   end
+ 
++  test "keeps stacked expert kernels quantized" do
++    assert {:ok, %{params: params}} = Bumblebee.load_model(@repo_experts, backend: @backend)
++
++    experts = params.data["decoder.blocks.1.ffn.experts"]
++
++    for {name, shape} <- [
++          {"gate_kernel", {8, 128, 64}},
++          {"intermediate_kernel", {8, 128, 64}},
++          {"output_kernel", {8, 64, 128}}
++        ] do
++      assert EMLX.Quantization.quantized?(experts[name])
++      assert Nx.shape(experts[name]) == shape
++      assert Nx.type(experts[name]) == {:s, 4}
++    end
++  end
++
++  test "mixture-of-experts logits match mlx-lm" do
++    assert {:ok, %{model: model, params: params}} =
++             Bumblebee.load_model(@repo_experts, backend: @backend)
++
++    # Reference values from mlx-lm 0.32.2 in full float32
++    assert_all_close(
++      predict(model, params)[[.., 1..3, 1..3]],
++      Nx.tensor([
++        [[-0.4258, 0.9569, -4.6432], [1.0224, 1.2381, -5.1027], [3.9145, 0.7524, 1.1975]]
++      ]),
++      atol: 1.0e-3
++    )
++  end
++
+   test "raises without the EMLX backend" do
+     assert_raise ArgumentError, ~r/loading MLX quantized weights requires the EMLX backend/, fn ->
+       Bumblebee.load_model(@repo_4bit, backend: Nx.BinaryBackend)
+diff --git a/test/bumblebee/layers/mixture_of_experts_test.exs b/test/bumblebee/layers/mixture_of_experts_test.exs
+new file mode 100644
+index 0000000..f27ba0a
+--- /dev/null
++++ b/test/bumblebee/layers/mixture_of_experts_test.exs
+@@ -0,0 +1,68 @@
++defmodule Bumblebee.Layers.MixtureOfExpertsTest do
++  use ExUnit.Case, async: true
++
++  import Bumblebee.TestHelpers
++
++  # 4 experts, 2 per token, hidden size 4 and intermediate size 3
++  defp kernels(key) do
++    {gate, key} = Nx.Random.normal(key, shape: {4, 3, 4})
++    {intermediate, key} = Nx.Random.normal(key, shape: {4, 3, 4})
++    {output, _key} = Nx.Random.normal(key, shape: {4, 4, 3})
++    {gate, intermediate, output}
++  end
++
++  defp run(x, router_logits, {gate, intermediate, output}) do
++    Bumblebee.Layers.mixture_of_experts_impl(x, router_logits, gate, intermediate, output,
++      num_experts_per_token: 2,
++      activation: :silu,
++      normalize_top_k: true
++    )
++  end
++
++  # The output of a token computed with only its two experts, spelled out
++  defp reference(x, router_logits, {gate, intermediate, output}, experts) do
++    probabilities = router_logits |> Nx.take(Nx.tensor(experts)) |> Axon.Activations.softmax()
++
++    experts
++    |> Enum.with_index()
++    |> Enum.map(fn {expert, i} ->
++      hidden =
++        Nx.multiply(
++          Axon.Activations.silu(Nx.dot(gate[expert], x)),
++          Nx.dot(intermediate[expert], x)
++        )
++
++      Nx.multiply(Nx.dot(output[expert], hidden), probabilities[i])
++    end)
++    |> Enum.reduce(&Nx.add/2)
++  end
++
++  # Gathering the chosen experts is used for up to 2 tokens, and computing every expert for more
++  for num_tokens <- [2, 5] do
++    test "the output of a token depends only on its top k experts, with #{num_tokens} tokens" do
++      num_tokens = unquote(num_tokens)
++      key = Nx.Random.key(0)
++      {x, key} = Nx.Random.normal(key, shape: {1, num_tokens, 4})
++      {router_logits, key} = Nx.Random.normal(key, shape: {1, num_tokens, 4})
++      # The first token is routed to experts 1 and 3
++      router_logits =
++        Nx.put_slice(router_logits, [0, 0, 0], Nx.tensor([[[-5.0, 2.0, -5.0, 1.0]]]))
++
++      kernels = kernels(key)
++
++      output = run(x, router_logits, kernels)
++
++      assert_all_close(
++        output[[0, 0]],
++        reference(x[[0, 0]], router_logits[[0, 0]], kernels, [1, 3])
++      )
++
++      # Changing the experts the first token is not routed to leaves its output unchanged
++      {gate, intermediate, output_kernel} = kernels
++      changed = Nx.multiply(Nx.tensor([10.0, 1.0, 10.0, 1.0]) |> Nx.reshape({4, 1, 1}), gate)
++      changed_output = run(x, router_logits, {changed, intermediate, output_kernel})
++
++      assert_all_close(changed_output[[0, 0]], output[[0, 0]])
++    end
++  end
++end
+diff --git a/test/bumblebee/text/qwen3_test.exs b/test/bumblebee/text/qwen3_test.exs
+index 5134d6d..6540ee8 100644
+--- a/test/bumblebee/text/qwen3_test.exs
++++ b/test/bumblebee/text/qwen3_test.exs
+@@ -75,4 +75,97 @@ defmodule Bumblebee.Text.Qwen3Test do
+       Nx.tensor([[-0.1487, -0.0071]])
+     )
+   end
++
++  describe "mixture of experts" do
++    test ":base" do
++      assert {:ok, %{model: model, params: params, spec: spec}} =
++               Bumblebee.load_model({:hf, "optimum-internal-testing/tiny-random-qwen3_moe"},
++                 architecture: :base
++               )
++
++      assert %Bumblebee.Text.Qwen3{architecture: :base} = spec
++
++      inputs = %{
++        "input_ids" => Nx.tensor([[10, 20, 30, 40, 50, 60, 70, 80, 0, 0]]),
++        "attention_mask" => Nx.tensor([[1, 1, 1, 1, 1, 1, 1, 1, 0, 0]])
++      }
++
++      outputs = Axon.predict(model, params, inputs)
++
++      assert Nx.shape(outputs.hidden_state) == {1, 10, 64}
++
++      assert_all_close(
++        outputs.hidden_state[[.., 1..3, 1..3]],
++        Nx.tensor([
++          [[0.1411, -0.1006, 0.0461], [-0.3383, -0.0336, 0.1454], [-0.4860, -0.2833, 0.0881]]
++        ])
++      )
++    end
++
++    test ":for_causal_language_modeling" do
++      assert {:ok, %{model: model, params: params, spec: spec}} =
++               Bumblebee.load_model({:hf, "optimum-internal-testing/tiny-random-qwen3_moe"})
++
++      assert %Bumblebee.Text.Qwen3{
++               architecture: :for_causal_language_modeling,
++               num_experts: 8,
++               num_experts_per_token: 2,
++               expert_block_step: 2
++             } = spec
++
++      inputs = %{
++        "input_ids" => Nx.tensor([[10, 20, 30, 40, 50, 60, 70, 80, 0, 0]]),
++        "attention_mask" => Nx.tensor([[1, 1, 1, 1, 1, 1, 1, 1, 0, 0]])
++      }
++
++      outputs = Axon.predict(model, params, inputs)
++
++      assert Nx.shape(outputs.logits) == {1, 10, 151_936}
++
++      assert_all_close(
++        outputs.logits[[.., 1..3, 1..3]],
++        Nx.tensor([
++          [[0.0042, 0.8791, -4.3974], [-0.7148, 0.9233, -4.0622], [4.9574, 0.1915, 1.2065]]
++        ])
++      )
++    end
++
++    test ":for_causal_language_modeling with few tokens, which gathers the chosen experts" do
++      assert {:ok, %{model: model, params: params}} =
++               Bumblebee.load_model({:hf, "optimum-internal-testing/tiny-random-qwen3_moe"})
++
++      outputs = Axon.predict(model, params, %{"input_ids" => Nx.tensor([[10, 20]])})
++
++      assert_all_close(
++        outputs.logits[[.., .., 1..3]],
++        Nx.tensor([[[1.4816, -1.7118, -0.8247], [0.0042, 0.8791, -4.3974]]])
++      )
++    end
++
++    test "generation" do
++      repo = {:hf, "optimum-internal-testing/tiny-random-qwen3_moe"}
++      assert {:ok, %{model: model, params: params, spec: spec}} = Bumblebee.load_model(repo)
++
++      generation_config =
++        Bumblebee.configure(Bumblebee.Text.GenerationConfig,
++          max_new_tokens: 8,
++          strategy: %{type: :greedy_search},
++          eos_token_id: nil,
++          pad_token_id: 0
++        )
++
++      inputs = %{
++        "input_ids" => Nx.tensor([[10, 20, 30, 40, 50, 60, 70, 80]]),
++        "seed" => Nx.tensor([0])
++      }
++
++      generate = Bumblebee.Text.Generation.build_generate(model, spec, generation_config)
++      %{token_ids: token_ids} = generate.(params, inputs)
++
++      assert_equal(
++        token_ids,
++        Nx.tensor([[119_063, 105_153, 9595, 63815, 41149, 81888, 70206, 57088]])
++      )
++    end
++  end
+ end

@@ -1,0 +1,515 @@
+diff --git a/emlx/c_src/emlx/compiler.cpp b/emlx/c_src/emlx/compiler.cpp
+index 50cd453..c925fe0 100644
+--- a/emlx/c_src/emlx/compiler.cpp
++++ b/emlx/c_src/emlx/compiler.cpp
+@@ -837,6 +837,28 @@ static const std::unordered_map<std::string, OpFn> op_registry = {
+                                           transpose, group_size, bits, mode, stream);
+      }},
+ 
++    // ── gather_qmm ────────────────────────────────────────────────────────────
++    //
++    // iattrs = [group_size, bits, transpose_int, mode_int, has_bias_int]
++    // Operands: [activation, weight, scales, biases?, rhs_indices]. Each
++    // activation row is multiplied by the expert of `weight` that
++    // rhs_indices names.
++    {"gather_qmm",
++     [](const auto &ops, const auto &attrs, mlx::core::StreamOrDevice stream) {
++       int group_size = static_cast<int>(attrs[0]);
++       int bits = static_cast<int>(attrs[1]);
++       bool transpose = attrs[2] != 0;
++       std::string mode = attrs[3].as_mode();
++       bool has_bias = attrs[4] != 0;
++       std::optional<mlx::core::array> biases_opt =
++           has_bias ? std::make_optional(ops[3]) : std::nullopt;
++       const auto &rhs_indices = ops[has_bias ? 4 : 3];
++       return mlx::core::gather_qmm(ops[0], ops[1], ops[2], biases_opt, std::nullopt,
++                                    rhs_indices, transpose, group_size, bits, mode,
++                                    /*global_scale=*/std::nullopt,
++                                    /*sorted_indices=*/false, stream);
++     }},
++
+     // ── indexing / selection ─────────────────────────────────────────────────
+     //
+     // select: operands = [pred, on_true, on_false]; no attrs.
+@@ -1772,6 +1794,51 @@ static std::vector<mlx::core::array> interpret_instructions(
+     const std::vector<mlx::core::array> *inputs,
+     const std::vector<mlx::core::array> *carry);
+ 
++// ── Global compile-cache mutex
++// ────────────────────────────────────────────────
++//
++// mlx::core::detail::compile and compile_erase both mutate MLX's process-wide
++// compile cache.  compile_program runs on the worker thread; ~Expr runs on
++// whichever BEAM scheduler/GC thread drops the last resource reference.  These
++// two paths can race, corrupting the cache and causing stale graph replay (e.g.
++// a static-indexed put_slice graph replayed for a dynamic-indexed program).
++//
++// All three cache-touching calls (compile, erase, and the first compiled_fn
++// invocation that inserts the traced graph) are serialised through this mutex,
++// and so are the compiled bodies of `:while` loops.
++// Recursive, because erasing a program can destroy the `:while` loops in it,
++// whose destructors take it again.
++static std::recursive_mutex s_mlx_compile_mutex;
++
++// Compiled loop bodies to erase. A loop is usually destroyed while MLX erases
++// the program that traced it, with MLX's cache lock held, which is not
++// reentrant, so the loop's erase waits for erase_pending_loop_bodies.
++static std::vector<
++    std::pair<mlx::core::detail::CompileCacheWeakPtr, std::uintptr_t>>
++    s_pending_loop_body_erases;
++
++// Called with s_mlx_compile_mutex held, and never with MLX's cache lock held.
++static void erase_pending_loop_bodies() {
++  while (!s_pending_loop_body_erases.empty()) {
++    auto pending = std::move(s_pending_loop_body_erases);
++    s_pending_loop_body_erases.clear();
++    for (const auto &[cache, compile_id] : pending)
++      mlx::core::detail::compile_erase(cache, compile_id);
++  }
++}
++
++// Records the compile cache of the calling thread, the one a compiled function
++// just used. Called with s_mlx_compile_mutex held.
++static void remember_compile_cache(
++    std::vector<mlx::core::detail::CompileCacheWeakPtr> &caches) {
++  auto cache = mlx::core::detail::compile_cache();
++  auto current = cache.lock();
++  for (const auto &known : caches)
++    if (known.lock() == current)
++      return;
++  caches.push_back(cache);
++}
++
+ // ── EMLXWhile ────────────────────────────────────────────────────────────
+ //
+ // Native lowering of a dynamic-trip-count `Nx.Defn.while` loop (see
+@@ -1800,13 +1867,21 @@ static std::vector<mlx::core::array> interpret_instructions(
+ // anything computed mid-loop outside the carry.
+ class EMLXWhile : public mlx::core::Primitive {
+ public:
+-  EMLXWhile(mlx::core::Stream stream, SubProgram cond, SubProgram body,
+-            std::shared_ptr<const std::vector<mlx::core::array>> captures,
++  EMLXWhile(mlx::core::Stream stream, mlx::core::Device body_device, SubProgram cond,
++            SubProgram body, std::shared_ptr<const std::vector<mlx::core::array>> captures,
+             std::shared_ptr<const std::vector<mlx::core::array>> constants)
+-      : mlx::core::Primitive(stream), cond_(std::move(cond)),
++      : mlx::core::Primitive(stream), body_device_(body_device), cond_(std::move(cond)),
+         body_(std::move(body)), captures_(std::move(captures)),
+         constants_(std::move(constants)) {}
+ 
++  ~EMLXWhile() override {
++    if (compile_id_ != 0) {
++      std::lock_guard<std::recursive_mutex> lk(s_mlx_compile_mutex);
++      for (const auto &cache : compile_caches_)
++        s_pending_loop_body_erases.emplace_back(cache, compile_id_);
++    }
++  }
++
+   void eval_cpu(const std::vector<mlx::core::array> &inputs,
+                 std::vector<mlx::core::array> &outputs) override {
+     eval(inputs, outputs);
+@@ -1842,9 +1917,58 @@ private:
+     return outs[0].item<bool>();
+   }
+ 
++  // On the GPU, a body without side effects or nested loops runs through
++  // mlx::core::compile, which fuses its elementwise ops and replays the traced
++  // graph on later iterations instead of interpreting every instruction again.
++  // On the CPU, fusing builds C++ kernels with the system compiler, which takes
++  // far longer than interpreting.
++  bool compilable_body() const {
++    if (body_device_.type != mlx::core::Device::gpu)
++      return false;
++    for (const auto &instr : body_.instructions) {
++      const std::string &name = instr.op.to_string();
++      if (name == "while" || name == "plugin" || name == "runtime_call" ||
++          name == "io_call")
++        return false;
++    }
++    return true;
++  }
++
++  std::vector<mlx::core::array> run_body(const std::vector<mlx::core::array> &carry) {
++    if (!body_checked_) {
++      body_checked_ = true;
++
++      if (compilable_body()) {
++        // Distinct from the ids of programs, which count up from 1
++        static std::atomic<std::uintptr_t> next_id{std::uintptr_t{1} << 48};
++        compile_id_ = next_id.fetch_add(1, std::memory_order_relaxed);
++
++        std::function<std::vector<mlx::core::array>(const std::vector<mlx::core::array> &)> fn =
++            [instructions = body_.instructions, outputs = body_.outputs,
++             captures = captures_, constants = constants_](
++                const std::vector<mlx::core::array> &carry) {
++              return interpret_instructions(instructions, outputs, captures,
++                                            constants, /*inputs=*/nullptr, &carry);
++            };
++
++        std::lock_guard<std::recursive_mutex> lk(s_mlx_compile_mutex);
++        compiled_body_ = mlx::core::detail::compile(std::move(fn), compile_id_);
++      }
++    }
++
++    if (compiled_body_) {
++      std::lock_guard<std::recursive_mutex> lk(s_mlx_compile_mutex);
++      auto outputs = compiled_body_(carry);
++      remember_compile_cache(compile_caches_);
++      return outputs;
++    }
++
++    return interpret_instructions(body_.instructions, body_.outputs, captures_,
++                                  constants_, /*inputs=*/nullptr, &carry);
++  }
++
+   void evaluate_body(std::vector<mlx::core::array> &carry) {
+-    carry = interpret_instructions(body_.instructions, body_.outputs, captures_,
+-                                   constants_, /*inputs=*/nullptr, &carry);
++    carry = run_body(carry);
+     // Force the new carry every iteration rather than chaining lazy graphs
+     // across a data-dependent number of iterations: unevaluated chaining
+     // would grow the traced graph unboundedly *per eval_program call*
+@@ -1867,10 +1991,16 @@ private:
+     }
+   }
+ 
++  mlx::core::Device body_device_;
+   SubProgram cond_;
+   SubProgram body_;
+   std::shared_ptr<const std::vector<mlx::core::array>> captures_;
+   std::shared_ptr<const std::vector<mlx::core::array>> constants_;
++  bool body_checked_ = false;
++  std::uintptr_t compile_id_ = 0;
++  std::function<std::vector<mlx::core::array>(const std::vector<mlx::core::array> &)>
++      compiled_body_;
++  std::vector<mlx::core::detail::CompileCacheWeakPtr> compile_caches_;
+ };
+ 
+ class EMLXRuntimeCall : public mlx::core::Primitive {
+@@ -2283,9 +2413,14 @@ static std::vector<mlx::core::array> interpret_instructions(
+     if (name == "while") {
+       const SubProgram &cond = instr.subprograms.at(0);
+       const SubProgram &body = instr.subprograms.at(1);
+-      auto primitive =
+-          std::make_shared<EMLXWhile>(mlx::core::default_stream(k_linalg_cpu),
+-                                      cond, body, captures, constants);
++      // The loop reads its condition on the CPU, and its body runs on the
++      // worker's device
++      const mlx::core::Device body_device =
++          emlx::g_current_worker ? emlx::g_current_worker->stream().device
++                                 : mlx::core::default_device();
++      auto primitive = std::make_shared<EMLXWhile>(mlx::core::default_stream(k_linalg_cpu),
++                                                   body_device, cond, body, captures,
++                                                   constants);
+ 
+       std::vector<mlx::core::Shape> shapes;
+       std::vector<mlx::core::Dtype> dtypes;
+@@ -2331,19 +2466,6 @@ static std::vector<mlx::core::array> interpret_instructions(
+   return outputs;
+ }
+ 
+-// ── Global compile-cache mutex
+-// ────────────────────────────────────────────────
+-//
+-// mlx::core::detail::compile and compile_erase both mutate MLX's process-wide
+-// compile cache.  compile_program runs on the worker thread; ~Expr runs on
+-// whichever BEAM scheduler/GC thread drops the last resource reference.  These
+-// two paths can race, corrupting the cache and causing stale graph replay (e.g.
+-// a static-indexed put_slice graph replayed for a dynamic-indexed program).
+-//
+-// All three cache-touching calls (compile, erase, and the first compiled_fn
+-// invocation that inserts the traced graph) are serialised through this mutex.
+-static std::mutex s_mlx_compile_mutex;
+-
+ // ── Expr destructor
+ // ───────────────────────────────────────────────────────────
+ //
+@@ -2353,21 +2475,15 @@ static std::mutex s_mlx_compile_mutex;
+ 
+ Expr::~Expr() {
+   if (compile_id != 0) {
+-    std::lock_guard<std::mutex> lk(s_mlx_compile_mutex);
++    std::lock_guard<std::recursive_mutex> lk(s_mlx_compile_mutex);
+     for (const auto &cache : compile_caches)
+       mlx::core::detail::compile_erase(cache, compile_id);
++    erase_pending_loop_bodies();
+   }
+ }
+ 
+-// Records the compile cache of the calling thread, the one that compiled_fn just
+-// used. Called with s_mlx_compile_mutex held.
+ static void remember_compile_cache(Expr &prog) {
+-  auto cache = mlx::core::detail::compile_cache();
+-  auto current = cache.lock();
+-  for (const auto &known : prog.compile_caches)
+-    if (known.lock() == current)
+-      return;
+-  prog.compile_caches.push_back(cache);
++  remember_compile_cache(prog.compile_caches);
+ }
+ 
+ // ── NIF implementations
+@@ -2471,7 +2587,8 @@ fine::Term compile_program_impl(ErlNifEnv *env, Program program) {
+   ptr->has_runtime_call = has_runtime_call;
+   ptr->num_real_outputs = program.num_real_outputs;
+   {
+-    std::lock_guard<std::mutex> lk(s_mlx_compile_mutex);
++    std::lock_guard<std::recursive_mutex> lk(s_mlx_compile_mutex);
++    erase_pending_loop_bodies();
+     ptr->compiled_fn = mlx::core::detail::compile(std::move(fn), unique_id);
+   }
+ 
+@@ -2510,7 +2627,7 @@ ERL_NIF_TERM eval_program(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+ 
+     std::vector<mlx::core::array> outputs;
+     {
+-      std::lock_guard<std::mutex> lk(s_mlx_compile_mutex);
++      std::lock_guard<std::recursive_mutex> lk(s_mlx_compile_mutex);
+       outputs = prog->compiled_fn(inputs);
+       remember_compile_cache(*prog);
+     }
+diff --git a/emlx/lib/emlx/native/expr.ex b/emlx/lib/emlx/native/expr.ex
+index bd868d4..5711964 100644
+--- a/emlx/lib/emlx/native/expr.ex
++++ b/emlx/lib/emlx/native/expr.ex
+@@ -1012,15 +1012,47 @@ defmodule EMLX.Native.Expr do
+               "Dequantize it first with EMLX.dequantize/1."
+     end
+ 
+-    case quantized_param_config(right, state.quant_signature, state.stable_positions) do
++    case gathered_quantized_param(right, state) do
++      {weight, indices, cfg} ->
++        expand_gather_quantized_dot(
++          id,
++          out_type,
++          {left, c_left, b_left},
++          {right, c_right, b_right},
++          {weight, indices, cfg},
++          state
++        )
++
+       nil ->
+-        expand_plain_dot(id, out_type, left, c_left, right, c_right, b_left, b_right, state)
++        case quantized_param_config(right, state.quant_signature, state.stable_positions) do
++          nil ->
++            expand_plain_dot(id, out_type, left, c_left, right, c_right, b_left, b_right, state)
++
++          cfg ->
++            expand_quantized_dot(id, out_type, left, c_left, b_left, right, c_right, cfg, state)
++        end
++    end
++  end
+ 
+-      cfg ->
+-        expand_quantized_dot(id, out_type, left, c_left, b_left, right, c_right, cfg, state)
++  # Taking rows of a quantized parameter stacked on its leading axis, as
++  # mixture-of-experts layers do to pick each token's expert
++  defp gathered_quantized_param(
++         %T{
++           data: %Nx.Defn.Expr{
++             op: :block,
++             args: [%Nx.Block.Take{axis: 0}, [weight, indices], _default, _fun]
++           }
++         },
++         state
++       ) do
++    case quantized_param_config(weight, state.quant_signature, state.stable_positions) do
++      nil -> nil
++      cfg -> {weight, indices, cfg}
+     end
+   end
+ 
++  defp gathered_quantized_param(_tensor, _state), do: nil
++
+   # ── conv ─────────────────────────────────────────────────────────────────────
+ 
+   defp expand_node(
+@@ -2444,6 +2476,67 @@ defmodule EMLX.Native.Expr do
+     %{state | node_to_ref: Map.put(state.node_to_ref, id, result_ref)}
+   end
+ 
++  # Lowers Nx.dot(x, [1], [0], Nx.take(w, indices), [c], [0]), where each
++  # row of x is multiplied by the expert of w that indices names, to
++  # mx::gather_qmm, which reads the packed experts without gathering them
++  defp expand_gather_quantized_dot(
++         id,
++         out_type,
++         {left, c_left, b_left},
++         {right, c_right, b_right},
++         {weight, indices, %EMLX.Quantization.Config{} = cfg},
++         state
++       ) do
++    {rows, _} = left.shape
++    {_, out_features, in_features} = right.shape
++
++    transpose =
++      case {c_right, cfg.transpose} do
++        {[2], nil} -> true
++        {[1], nil} -> false
++        {_, explicit} -> explicit
++      end
++
++    unless tuple_size(left.shape) == 2 and c_left == [1] and b_left == [0] and b_right == [0] and
++             tuple_size(indices.shape) == 1 and c_right in [[1], [2]] do
++      raise ArgumentError,
++            "does not yet lower op :dot of a gathered quantized operand, except as " <>
++              "Nx.dot(x, [1], [0], Nx.take(w, indices), [c], [0]) with x of rank 2"
++    end
++
++    left_ref = Map.fetch!(state.node_to_ref, left.data.id)
++    weight_ref = Map.fetch!(state.node_to_ref, weight.data.id)
++    indices_ref = Map.fetch!(state.node_to_ref, indices.data.id)
++
++    {x_ref, state} = emit_reshape_instr(left_ref, [rows, 1, in_features], state)
++    {indices_ref, state} = emit_cast_if_needed(indices_ref, indices.type, {:u, 32}, state)
++    {scales_ref, state} = emit_capture(cfg.scales, state)
++
++    {operands, has_bias, state} =
++      if cfg.biases do
++        {biases_ref, state} = emit_capture(cfg.biases, state)
++        {[x_ref, weight_ref, scales_ref, biases_ref, indices_ref], 1, state}
++      else
++        {[x_ref, weight_ref, scales_ref, indices_ref], 0, state}
++      end
++
++    mode_int = String.to_atom(cfg.mode)
++    transpose_int = if transpose, do: 1, else: 0
++    attrs = [cfg.group_size, cfg.bits, transpose_int, mode_int, has_bias]
++
++    qmm_ref = make_ref()
++
++    state = %{
++      state
++      | instructions: [{qmm_ref, :gather_qmm, operands, attrs} | state.instructions]
++    }
++
++    {reshaped_ref, state} = emit_reshape_instr(qmm_ref, [rows, out_features], state)
++    result_type = Nx.Type.merge(left.type, cfg.scales.type)
++    {result_ref, state} = emit_cast_if_needed(reshaped_ref, result_type, out_type, state)
++    %{state | node_to_ref: Map.put(state.node_to_ref, id, result_ref)}
++  end
++
+   defp emit_capture(%Nx.Tensor{} = tensor, state) do
+     ref = make_ref()
+     {ref, %{state | captures: [{ref, tensor} | state.captures]}}
+@@ -3168,6 +3261,7 @@ defmodule EMLX.Native.Expr do
+           positions
+           |> maybe_put_stable_position(left, stable)
+           |> maybe_put_stable_position(right, stable)
++          |> maybe_put_stable_position(gathered_operand(right), stable)
+ 
+         {positions, stable}
+ 
+@@ -3190,6 +3284,13 @@ defmodule EMLX.Native.Expr do
+     end)
+   end
+ 
++  defp gathered_operand(%T{
++         data: %Nx.Defn.Expr{op: :block, args: [%Nx.Block.Take{axis: 0}, [tensor, _], _, _]}
++       }),
++       do: tensor
++
++  defp gathered_operand(tensor), do: tensor
++
+   defp maybe_put_stable_position(positions, %T{data: %Nx.Defn.Expr{id: id}}, stable) do
+     case Map.fetch(stable, id) do
+       {:ok, pos} -> MapSet.put(positions, pos)
+diff --git a/emlx/test/emlx/compiler_test.exs b/emlx/test/emlx/compiler_test.exs
+index b4d7b60..a493f13 100644
+--- a/emlx/test/emlx/compiler_test.exs
++++ b/emlx/test/emlx/compiler_test.exs
+@@ -319,6 +319,48 @@ defmodule EMLX.CompilerTest do
+ 
+       assert Enum.uniq(results) == [[0.0, -1.0]]
+     end
++
++    @tag :metal
++    test "gives the same results with the body compiled on the GPU" do
++      fun = Nx.Defn.jit(&CountDown.count_down/1, compiler: EMLX, device: :gpu)
++
++      results =
++        for _ <- 1..20 do
++          fun.(Nx.tensor([30.0, 2.0], backend: {EMLX.Backend, device: :gpu}))
++          |> Nx.to_flat_list()
++        end
++
++      assert Enum.uniq(results) == [[14.0, -14.0]]
++    end
++
++    # Freeing a program frees its loops, whose compiled bodies are erased from
++    # the same MLX cache, under a lock MLX does not let a thread take twice
++    @tag :metal
++    test "evicts programs with loops compiled on the GPU" do
++      config = Application.get_env(:emlx, EMLX.CompileCache)
++      Application.put_env(:emlx, EMLX.CompileCache, max_items: 1)
++      on_exit(fn -> Application.put_env(:emlx, EMLX.CompileCache, config || []) end)
++
++      task =
++        Task.async(fn ->
++          for n <- 1..4 do
++            input = Nx.broadcast(Nx.tensor(3.0, backend: {EMLX.Backend, device: :gpu}), {n})
++            fun = Nx.Defn.jit(&CountDown.count_down/1, compiler: EMLX, device: :gpu)
++            result = fun.(input) |> Nx.to_flat_list()
++            :erlang.garbage_collect()
++            result
++          end
++        end)
++
++      assert Task.await(task, 30_000) == [
++               [0.0],
++               [0.0, 0.0],
++               [0.0, 0.0, 0.0],
++               [0.0, 0.0, 0.0, 0.0]
++             ]
++
++      assert :ets.info(:emlx_native_dispatch_cache, :size) == 1
++    end
+   end
+ 
+   describe "__compile__/4 queue wrapping" do
+diff --git a/emlx/test/emlx/gather_quantized_matmul_test.exs b/emlx/test/emlx/gather_quantized_matmul_test.exs
+index 7620aa2..a971fad 100644
+--- a/emlx/test/emlx/gather_quantized_matmul_test.exs
++++ b/emlx/test/emlx/gather_quantized_matmul_test.exs
+@@ -26,6 +26,41 @@ defmodule EMLX.GatherQuantizedMatmulTest do
+     |> Nx.stack()
+   end
+ 
++  describe "Nx.dot of experts taken from a quantized tensor" do
++    defp take_dot(x, w, indices), do: Nx.dot(x, [1], [0], Nx.take(w, indices), [2], [0])
++
++    test "multiplies each row by its expert, as with the dequantized experts" do
++      qw = stacked_experts(4, 32, 128)
++      x = Nx.iota({5, 128}, type: :f32) |> Nx.divide(128)
++      indices = Nx.tensor([3, 0, 3, 1, 2])
++
++      got = Nx.Defn.jit(&take_dot/3, compiler: EMLX).(x, qw, indices)
++      expected = take_dot(x, EMLX.Quantization.dequantize(qw), indices)
++
++      assert Nx.shape(got) == {5, 32}
++      assert_all_close(got, expected, atol: 1.0e-3)
++    end
++
++    test "matches gather_quantized_matmul/4" do
++      qw = stacked_experts(4, 32, 128)
++      x = Nx.iota({4, 128}, type: :f32) |> Nx.divide(128)
++      indices = Nx.tensor([2, 2, 0, 1])
++
++      got = Nx.Defn.jit(&take_dot/3, compiler: EMLX).(x, qw, indices)
++
++      expected =
++        x
++        |> Nx.reshape({4, 1, 1, 128})
++        |> EMLX.Quantization.gather_quantized_matmul(
++          qw,
++          Nx.reshape(Nx.as_type(indices, :u32), {4, 1})
++        )
++        |> Nx.reshape({4, 32})
++
++      assert_all_close(got, expected)
++    end
++  end
++
+   describe "gather_quantized_matmul/4" do
+     test "matches a dense per-expert reference" do
+       qw = stacked_experts(4, 32, 128)
