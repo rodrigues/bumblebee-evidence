@@ -17,9 +17,9 @@ All runs were on macOS (Apple M5 Pro, 64 GiB), with Elixir 1.20.5, OTP 29.1.2 an
 
 | Checkpoint | 30 greedy tokens | Top choices, teacher forced | Memory after generating | Peak memory | mlx-lm peak memory | Time per token | mlx-lm time per token |
 |---|---|---|---|---|---|---|---|
-| mlx-community/Qwen3-4B-Instruct-2507-4bit | follow mlx-lm to token 24 | 29 of 30 | 3.09 GB | 3.26 GB | 2.37 GB | 17.0 ms | 11.2 ms |
-| mlx-community/Qwen3-4B-Instruct-2507-8bit | follow mlx-lm to token 23 | 29 of 30 | 5.10 GB | 5.47 GB | 4.41 GB | 24.3 ms | 19.3 ms |
-| Qwen/Qwen3-4B-Instruct-2507, bfloat16 | follow mlx-lm to token 26 | 29 of 30 | 8.87 GB | 8.92 GB | 8.13 GB | 37.7 ms | 34.5 ms |
+| mlx-community/Qwen3-4B-Instruct-2507-4bit | follow mlx-lm to token 24 | 29 of 30 | 3.09 GB | 3.26 GB | 2.37 GB | 17.2 ms | 11.2 ms |
+| mlx-community/Qwen3-4B-Instruct-2507-8bit | follow mlx-lm to token 23 | 29 of 30 | 5.10 GB | 5.47 GB | 4.41 GB | 24.4 ms | 19.3 ms |
+| Qwen/Qwen3-4B-Instruct-2507, bfloat16 | follow mlx-lm to token 26 | 29 of 30 | 8.87 GB | 8.92 GB | 8.13 GB | 38.0 ms | 34.5 ms |
 
 The tokenizer gives the same ids as mlx-lm.
 Bumblebee uses about 0.7 GB more than mlx-lm with the quantized checkpoints because it dequantizes the embedding table.
