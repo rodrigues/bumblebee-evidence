@@ -32,11 +32,11 @@
       315,
       9625
     ],
-    "load_seconds": 2.5,
+    "load_seconds": 1.2,
     "memory_after_generating_gb": 8.87,
     "memory_after_loading_gb": 8.82,
-    "ms_per_token": 39.3,
-    "peak_memory_gb": 8.91,
+    "ms_per_token": 37.7,
+    "peak_memory_gb": 8.92,
     "teacher_forced_argmax": [
       785,
       6722,
@@ -126,10 +126,10 @@
       315,
       9625
     ],
-    "load_seconds": 0.9,
+    "load_seconds": 0.7,
     "memory_after_generating_gb": 3.09,
     "memory_after_loading_gb": 2.48,
-    "ms_per_token": 19.7,
+    "ms_per_token": 17.0,
     "peak_memory_gb": 3.26,
     "teacher_forced_argmax": [
       785,
@@ -220,10 +220,10 @@
       315,
       9625
     ],
-    "load_seconds": 1.0,
+    "load_seconds": 1.1,
     "memory_after_generating_gb": 5.1,
     "memory_after_loading_gb": 4.69,
-    "ms_per_token": 32.2,
+    "ms_per_token": 24.3,
     "peak_memory_gb": 5.47,
     "teacher_forced_argmax": [
       785,

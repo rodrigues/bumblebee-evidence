@@ -1,18 +1,20 @@
 # Loads the MLX quantized checkpoints with Bumblebee on EMLX, decodes greedily from the prompt in outputs/reference.json and compares with mlx-lm.
 # Also loads the bf16 checkpoint of the same model, to compare memory and speed.
 # Writes outputs/bumblebee.json and outputs/results.md.
-# Run with: BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee.exs
-# MLX computes f32 matrix products in TF32 by default on M5-class GPUs; 0 keeps full f32.
-System.put_env("MLX_ENABLE_TF32", System.get_env("MLX_ENABLE_TF32", "0"))
+# Run with: MLX_ENABLE_TF32=0 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee.exs
+# MLX computes f32 matrix products in TF32 by default on M5-class GPUs, and reads MLX_ENABLE_TF32 from the shell, not from System.put_env.
+System.get_env("MLX_ENABLE_TF32") || raise "set MLX_ENABLE_TF32 in the shell, 0 for full float32 matrix products"
 
 Mix.install([
   {:bumblebee, path: System.fetch_env!("BUMBLEBEE_PATH")},
   {:emlx, path: System.fetch_env!("EMLX_PATH"), override: true},
+  # EMLX does not build with fine 0.2, which its "~> 0.1" requirement allows
+  {:fine, "0.1.6", override: true},
   {:jason, "~> 1.4"}
 ])
 
 backend = {EMLX.Backend, device: :gpu}
-Nx.default_backend(backend)
+Nx.global_default_backend(backend)
 dir = __DIR__
 reference = dir |> Path.join("outputs/reference.json") |> File.read!() |> Jason.decode!()
 gb = fn bytes -> Float.round(bytes / 1.0e9, 2) end
@@ -86,7 +88,12 @@ end
 
 input_ids = reference |> Map.values() |> hd() |> Map.fetch!("input_ids")
 repos = Enum.sort(Map.keys(reference))
-results = Map.new(repos, fn repo -> {repo, run.(repo, input_ids)} end)
+# Each checkpoint runs in its own process; EMLX frees its memory a few milliseconds after the process exits, so the next one waits before measuring
+results =
+  Map.new(repos, fn repo ->
+    Process.sleep(500)
+    {repo, Task.async(fn -> run.(repo, input_ids) end) |> Task.await(:infinity)}
+  end)
 File.write!(Path.join(dir, "outputs/bumblebee.json"), Jason.encode!(results, pretty: true))
 
 rows =

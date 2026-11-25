@@ -1,5 +1,5 @@
 {
-  "load_seconds": 2.0,
+  "load_seconds": 2.6,
   "memory_after_generating_gb": 17.05,
   "memory_after_loading_gb": 15.13,
   "peak_memory_gb": 17.68,
@@ -37,7 +37,7 @@
         9859,
         264
       ],
-      "ms_per_token": 76.8,
+      "ms_per_token": 76.9,
       "teacher_forced_argmax": [
         760,
         6511,
@@ -131,7 +131,7 @@
         13,
         353
       ],
-      "ms_per_token": 76.7,
+      "ms_per_token": 75.5,
       "teacher_forced_argmax": [
         760,
         1156,
