@@ -34,8 +34,8 @@ The second repeats one token, so the keys within each chunk are identical, which
 | Run | Thinking on | Thinking off | Time per token |
 |---|---|---|---|
 | EXLA, CPU, float32 | identical | identical | 57 ms |
-| EMLX, GPU, float32 | identical | identical | 32 ms |
-| EMLX, GPU, bfloat16 | identical | identical | 20 ms |
+| EMLX, GPU, float32 | identical | identical | 31 ms |
+| EMLX, GPU, bfloat16 | identical | identical | 19 ms |
 
 mlx-lm takes 17 ms per token for the same model in bfloat16 ([`mlx_2b.py`](bumblebee/mlx_2b.py), [`mlx-2b.json`](bumblebee/outputs/mlx-2b.json)).
 The EMLX runs set MLX_ENABLE_TF32=0 for full float32 matrix products on the M5; with TF32, MLX's default there, the results are the same ([`results-2b-tf32.md`](bumblebee/outputs/results-2b-tf32.md)).
@@ -53,10 +53,10 @@ Each time is one pass after a warm-up pass:
 
 | Prompt tokens | Bumblebee | mlx-lm |
 |---|---|---|
-| 128 | 43 ms | 31 ms |
-| 512 | 128 ms | 78 ms |
-| 2048 | 494 ms | 301 ms |
-| 8192 | 2282 ms | 1298 ms |
+| 128 | 45 ms | 31 ms |
+| 512 | 119 ms | 78 ms |
+| 2048 | 492 ms | 301 ms |
+| 8192 | 2254 ms | 1298 ms |
 
 
 ## Qwen3.8-27B
@@ -75,6 +75,7 @@ The MLX 4-bit conversion of 27B loads and decodes as mlx-lm does, as recorded in
 
 ```sh
 cd bumblebee
+export MLX_ENABLE_TF32=0
 uv run reference.py
 uv run tiny_mlx.py
 uv run reference_long.py

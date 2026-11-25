@@ -34,7 +34,7 @@
           74455,
           198
         ],
-        "ms_per_token": 19.6
+        "ms_per_token": 19.1
       },
       "thinking=true": {
         "generated": [
@@ -69,7 +69,7 @@
           262,
           348
         ],
-        "ms_per_token": 19.8
+        "ms_per_token": 19.0
       }
     },
     "EMLX, GPU, f32": {
@@ -106,7 +106,7 @@
           74455,
           198
         ],
-        "ms_per_token": 31.5
+        "ms_per_token": 31.4
       },
       "thinking=true": {
         "generated": [
@@ -141,7 +141,7 @@
           262,
           348
         ],
-        "ms_per_token": 31.7
+        "ms_per_token": 31.3
       }
     },
     "EXLA, CPU, f32": {
@@ -213,7 +213,7 @@
           262,
           348
         ],
-        "ms_per_token": 57.5
+        "ms_per_token": 56.7
       }
     }
   },
