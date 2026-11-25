@@ -1,0 +1,1371 @@
+diff --git a/lib/bumblebee.ex b/lib/bumblebee.ex
+index e554e22..ea74ab0 100644
+--- a/lib/bumblebee.ex
++++ b/lib/bumblebee.ex
+@@ -212,6 +212,7 @@ defmodule Bumblebee do
+     "Qwen3ForCausalLM" => {Bumblebee.Text.Qwen3, :for_causal_language_modeling},
+     "Qwen3MoeModel" => {Bumblebee.Text.Qwen3, :base},
+     "Qwen3MoeForCausalLM" => {Bumblebee.Text.Qwen3, :for_causal_language_modeling},
++    "KimiLinearForCausalLM" => {Bumblebee.Text.KimiLinear, :for_causal_language_modeling},
+     "Llama4ForCausalLM" => {Bumblebee.Text.Llama4, :for_causal_language_modeling},
+     "Llama4ForConditionalGeneration" => {Bumblebee.Text.Llama4, :for_causal_language_modeling},
+     "Llama4TextModel" => {Bumblebee.Text.Llama4, :base},
+diff --git a/lib/bumblebee/layers.ex b/lib/bumblebee/layers.ex
+index 9b0e82f..88c8cfe 100644
+--- a/lib/bumblebee/layers.ex
++++ b/lib/bumblebee/layers.ex
+@@ -30,7 +30,7 @@ defmodule Bumblebee.Layers do
+   end
+ 
+   @doc false
+-  def mixture_of_experts_impl(x, router_logits, gate, intermediate, output, opts) do
++  def mixture_of_experts_impl(x, router_logits, gate, intermediate, output, selection_bias, opts) do
+     {batch_size, sequence_length, hidden_size} = Nx.shape(x)
+     num_tokens = batch_size * sequence_length
+     num_experts = Nx.axis_size(gate, 0)
+@@ -46,13 +46,23 @@ defmodule Bumblebee.Layers do
+         :sigmoid -> Axon.Activations.sigmoid(router_logits)
+       end
+ 
+-    {weights, experts} = Nx.top_k(scores, k: k)
++    {weights, experts} =
++      case selection_bias do
++        %Axon.None{} ->
++          Nx.top_k(scores, k: k)
++
++        selection_bias ->
++          {_, experts} = Nx.top_k(Nx.add(scores, Nx.as_type(selection_bias, :f32)), k: k)
++          {Nx.take_along_axis(scores, experts, axis: 1), experts}
++      end
+ 
+     weights =
+       if opts[:normalize_top_k],
+         do: Nx.divide(weights, Nx.sum(weights, axes: [-1], keep_axes: true)),
+         else: weights
+ 
++    weights = Nx.multiply(weights, opts[:output_scale])
++
+     weights = Nx.as_type(weights, Nx.type(x))
+     activation = activation_fun(opts[:activation])
+ 
+diff --git a/lib/bumblebee/layers/transformer.ex b/lib/bumblebee/layers/transformer.ex
+index b9b64ba..a61f65d 100644
+--- a/lib/bumblebee/layers/transformer.ex
++++ b/lib/bumblebee/layers/transformer.ex
+@@ -315,6 +315,13 @@ defmodule Bumblebee.Layers.Transformer do
+     * `:weight_inputs` - whether to multiply each expert's input by its
+       weight, instead of its output. Defaults to `false`
+ 
++    * `:selection_bias` - whether to add a learned bias to the expert
++      weights when choosing the experts, but not when weighting them.
++      Defaults to `false`
++
++    * `:output_scale` - the factor applied to the expert weights after
++      normalization. Defaults to `1.0`
++
+     * `:kernel_initializer` - initializer for kernel weights. Defaults
+       to `:glorot_uniform`
+ 
+@@ -329,6 +336,8 @@ defmodule Bumblebee.Layers.Transformer do
+         router_activation: :softmax,
+         normalize_top_k: true,
+         weight_inputs: false,
++        selection_bias: false,
++        output_scale: 1.0,
+         kernel_initializer: :glorot_uniform
+       ])
+ 
+@@ -357,15 +366,26 @@ defmodule Bumblebee.Layers.Transformer do
+     output =
+       kernel.("output_kernel", fn _, _ -> {num_experts, output_size, intermediate_size} end)
+ 
++    # Parameter shapes are functions of the other inputs, so an absent
++    # bias is not an input
++    {impl, selection_bias} =
++      if opts[:selection_bias] do
++        {&Layers.mixture_of_experts_impl/7,
++         [Axon.param("selection_bias", fn _, _ -> {num_experts} end, initializer: :zeros)]}
++      else
++        {&Layers.mixture_of_experts_impl(&1, &2, &3, &4, &5, %Axon.None{}, &6), []}
++      end
++
+     Axon.layer(
+-      &Layers.mixture_of_experts_impl/6,
+-      [x, router_logits, gate, intermediate, output],
++      impl,
++      [x, router_logits, gate, intermediate, output] ++ selection_bias,
+       name: join(name, "experts"),
+       num_experts_per_token: opts[:num_experts_per_token],
+       activation: opts[:activation],
+       router_activation: opts[:router_activation],
+       normalize_top_k: opts[:normalize_top_k],
+       weight_inputs: opts[:weight_inputs],
++      output_scale: opts[:output_scale],
+       op_name: :mixture_of_experts
+     )
+   end
+diff --git a/lib/bumblebee/text/kimi_linear.ex b/lib/bumblebee/text/kimi_linear.ex
+new file mode 100644
+index 0000000..947a8ac
+--- /dev/null
++++ b/lib/bumblebee/text/kimi_linear.ex
+@@ -0,0 +1,1079 @@
++defmodule Bumblebee.Text.KimiLinear do
++  alias Bumblebee.Shared
++
++  options =
++    [
++      vocab_size: [
++        default: 163_840,
++        doc: """
++        the vocabulary size of the token embedding. This corresponds to the number of distinct
++        tokens that can be represented in model input and output
++        """
++      ],
++      max_positions: [
++        default: 1_048_576,
++        doc: """
++        the vocabulary size of the position embedding. This corresponds to the maximum sequence
++        length that this model can process. Typically this is set to a large value just in case,
++        such as 512, 1024 or 2048
++        """
++      ],
++      hidden_size: [
++        default: 2304,
++        doc: "the dimensionality of hidden layers"
++      ],
++      intermediate_size: [
++        default: 9216,
++        doc: "the dimensionality of intermediate layers in blocks without experts"
++      ],
++      expert_intermediate_size: [
++        default: 1024,
++        doc: "the dimensionality of intermediate layers in each expert"
++      ],
++      num_blocks: [
++        default: 27,
++        doc: "the number of Transformer blocks in the model"
++      ],
++      layer_types: [
++        default: nil,
++        doc: """
++        the type of attention in each block, either `:linear_attention` (Kimi Delta Attention)
++        or `:full_attention` (multi-head latent attention). Defaults to full attention in
++        every fourth block, starting from the fifth
++        """
++      ],
++      num_attention_heads: [
++        default: 32,
++        doc: "the number of attention heads in full attention blocks"
++      ],
++      attention_latent_size: [
++        default: 512,
++        doc: "the size of the compressed keys and values in full attention blocks"
++      ],
++      attention_query_latent_size: [
++        default: nil,
++        doc: """
++        the size of the compressed queries in full attention blocks. When `nil`, queries
++        are projected directly
++        """
++      ],
++      attention_key_head_size: [
++        default: 128,
++        doc: "the size of the per-head part of each key in full attention blocks"
++      ],
++      attention_shared_key_size: [
++        default: 64,
++        doc: "the size of the part of each key shared by all heads in full attention blocks"
++      ],
++      attention_value_head_size: [
++        default: 128,
++        doc: "the size of each value head in full attention blocks"
++      ],
++      linear_attention_num_heads: [
++        default: 32,
++        doc: "the number of heads in linear attention blocks"
++      ],
++      linear_attention_head_size: [
++        default: 128,
++        doc: "the size of each head in linear attention blocks"
++      ],
++      linear_attention_conv_kernel_size: [
++        default: 4,
++        doc:
++          "the kernel size of the convolution over queries, keys and values in linear attention"
++      ],
++      num_experts: [
++        default: 256,
++        doc: "the number of experts in each block with experts"
++      ],
++      num_experts_per_token: [
++        default: 8,
++        doc: "the number of experts each token is routed to"
++      ],
++      num_shared_experts: [
++        default: 1,
++        doc: "the number of shared experts, run for every token, merged into one network"
++      ],
++      num_dense_blocks: [
++        default: 1,
++        doc: "the number of leading blocks without experts"
++      ],
++      normalize_top_k: [
++        default: true,
++        doc: "whether to normalize the weights of the chosen experts to sum to 1"
++      ],
++      expert_output_scale: [
++        default: 2.446,
++        doc: "the factor applied to the weights of the chosen experts"
++      ],
++      activation: [
++        default: :silu,
++        doc: "the activation function"
++      ],
++      layer_norm_epsilon: [
++        default: 1.0e-5,
++        doc: "the epsilon used by RMS normalization layers"
++      ],
++      initializer_scale: [
++        default: 0.02,
++        doc:
++          "the standard deviation of the normal initializer used for initializing kernel parameters"
++      ],
++      tie_word_embeddings: [
++        default: false,
++        doc: "whether to tie input and output embedding weights"
++      ]
++    ] ++ Shared.token_options(pad_token_id: 163_839)
++
++  @moduledoc """
++  Kimi Linear model family.
++
++  Kimi Linear interleaves blocks of Kimi Delta Attention, a linear
++  attention with a recurrent state decayed per channel, and blocks of
++  multi-head latent attention without position embedding. Its
++  feed-forward networks are mixtures of experts with a shared expert.
++
++  ## Architectures
++
++    * `:base` - plain Kimi Linear without any head on top
++
++    * `:for_causal_language_modeling` - Kimi Linear with a language
++      modeling head. The head returns logits for each token in the
++      original sequence
++
++  ## Inputs
++
++    * `"input_ids"` - `{batch_size, sequence_length}`
++
++      Indices of input sequence tokens in the vocabulary.
++
++    * `"attention_mask"` - `{batch_size, sequence_length}`
++
++      Mask indicating which tokens to attend to. This is used to ignore
++      padding tokens, which are added when processing a batch of sequences
++      with different length.
++
++    * `"input_embeddings"` - `{batch_size, sequence_length, hidden_size}`
++
++      Embedded representation of `"input_ids"`, which can be specified
++      for more control over how `"input_ids"` are embedded than the
++      model's internal embedding lookup. If `"input_embeddings"` are present,
++      then `"input_ids"` will be ignored.
++
++    * `"cache"`
++
++      A container with cached layer results used to speed up sequential
++      decoding (autoregression). With cache, certain hidden states are
++      taken from the cache, rather than recomputed on every decoding
++      pass. The cache should be treated as opaque and initialized with
++      `Bumblebee.Text.Generation.init_cache/4`.
++
++  ## Global layer options
++
++  #{Shared.global_layer_options_doc([:output_hidden_states, :output_attentions])}
++
++  ## Configuration
++
++  #{Shared.options_doc(options)}
++  """
++
++  defstruct [architecture: :base] ++ Shared.option_defaults(options)
++
++  @behaviour Bumblebee.ModelSpec
++  @behaviour Bumblebee.Configurable
++  @behaviour Bumblebee.Text.Generation
++
++  import Nx.Defn
++  import Bumblebee.Utils.Model, only: [join: 2]
++
++  alias Bumblebee.Layers
++
++  @impl true
++  def architectures(), do: [:base, :for_causal_language_modeling]
++
++  @impl true
++  def config(spec, opts) do
++    Shared.put_config_attrs(spec, opts)
++  end
++
++  @impl true
++  def input_template(_spec) do
++    %{
++      "input_ids" => Nx.template({1, 1}, :s64)
++    }
++  end
++
++  @impl true
++  def init_cache(spec, batch_size, max_length, _inputs) do
++    cache =
++      Layers.Decoder.init_cache(batch_size, max_length,
++        hidden_size: spec.hidden_size,
++        attention_head_size: 1,
++        decoder_num_attention_heads: 1,
++        decoder_num_blocks: spec.num_blocks
++      )
++
++    # Full attention blocks keep the compressed keys and values and the
++    # shared part of the keys, which are expanded for every step, as in
++    # transformers
++    latent_attention = %{
++      key: Nx.broadcast(0.0, {batch_size, max_length, 1, spec.attention_latent_size}),
++      value: Nx.broadcast(0.0, {batch_size, max_length, 1, spec.attention_shared_key_size})
++    }
++
++    # Linear attention blocks keep the convolution inputs of the last
++    # few tokens and the recurrent state, instead of keys and values
++    head_size = spec.linear_attention_head_size
++
++    linear_attention = %{
++      conv_state:
++        Nx.broadcast(
++          0.0,
++          {batch_size, spec.linear_attention_conv_kernel_size - 1,
++           linear_attention_conv_size(spec)}
++        ),
++      recurrent_state:
++        Nx.broadcast(0.0, {batch_size, spec.linear_attention_num_heads, head_size, head_size})
++    }
++
++    blocks =
++      cache.blocks
++      |> Tuple.to_list()
++      |> Enum.zip_with(layer_types(spec), fn
++        block, :full_attention -> %{block | self_attention: latent_attention}
++        block, :linear_attention -> %{block | self_attention: linear_attention}
++      end)
++      |> List.to_tuple()
++
++    %{cache | blocks: blocks}
++  end
++
++  @impl true
++  def model(%__MODULE__{architecture: :base} = spec) do
++    inputs = inputs(spec)
++
++    inputs
++    |> core(spec)
++    |> Layers.output()
++  end
++
++  def model(%__MODULE__{architecture: :for_causal_language_modeling} = spec) do
++    inputs = inputs(spec)
++
++    outputs = core(inputs, spec)
++
++    logits =
++      Layers.dense_transposed(outputs.hidden_state, spec.vocab_size,
++        kernel_initializer: kernel_initializer(spec),
++        name: "language_modeling_head.output"
++      )
++
++    Layers.output(%{
++      logits: logits,
++      hidden_states: outputs.hidden_states,
++      attentions: outputs.attentions,
++      cache: outputs.cache
++    })
++  end
++
++  defp inputs(spec) do
++    shape = {nil, nil}
++    hidden_shape = {nil, nil, spec.hidden_size}
++
++    Bumblebee.Utils.Model.inputs_to_map([
++      Axon.input("input_ids", optional: true, shape: shape),
++      Axon.input("attention_mask", optional: true, shape: shape),
++      Axon.input("input_embeddings", optional: true, shape: hidden_shape),
++      Axon.input("cache", optional: true)
++    ])
++  end
++
++  defp core(inputs, spec) do
++    embeddings =
++      Layers.default inputs["input_embeddings"] do
++        Axon.embedding(inputs["input_ids"], spec.vocab_size, spec.hidden_size,
++          kernel_initializer: kernel_initializer(spec),
++          name: "embedder.token_embedding"
++        )
++      end
++
++    decoder_outputs =
++      decoder(embeddings, inputs["attention_mask"], inputs["cache"], spec, name: "decoder")
++
++    hidden_state =
++      Layers.rms_norm(decoder_outputs.hidden_state,
++        epsilon: spec.layer_norm_epsilon,
++        name: "output_norm"
++      )
++
++    %{
++      hidden_state: hidden_state,
++      hidden_states: Layers.append(decoder_outputs.hidden_states, hidden_state),
++      attentions: decoder_outputs.attentions,
++      cache: decoder_outputs.cache
++    }
++  end
++
++  defp decoder(hidden_state, attention_mask, cache, spec, opts) do
++    name = opts[:name]
++    layer_types = layer_types(spec)
++
++    Layers.Transformer.blocks(
++      hidden_state,
++      [
++        num_blocks: spec.num_blocks,
++        attention_mask: attention_mask,
++        cache: cache,
++        name: join(name, "blocks")
++      ],
++      fn hidden_state, block ->
++        name = block.name
++
++        shortcut = hidden_state
++
++        normalized =
++          Layers.rms_norm(hidden_state,
++            epsilon: spec.layer_norm_epsilon,
++            name: join(name, "self_attention_norm")
++          )
++
++        {hidden_state, attention, self_attention_cache} =
++          case Enum.fetch!(layer_types, block.index) do
++            :full_attention ->
++              latent_attention(normalized, block, spec, name: join(name, "self_attention"))
++
++            :linear_attention ->
++              {hidden_state, cache} =
++                kimi_delta_attention(normalized, attention_mask, block.self_attention_cache, spec,
++                  name: join(name, "linear_attention")
++                )
++
++              {hidden_state, Layers.none(), cache}
++          end
++
++        hidden_state = Axon.add(hidden_state, shortcut)
++
++        shortcut = hidden_state
++
++        hidden_state =
++          Layers.rms_norm(hidden_state,
++            epsilon: spec.layer_norm_epsilon,
++            name: join(name, "output_norm")
++          )
++
++        hidden_state =
++          if block.index < spec.num_dense_blocks do
++            Layers.Transformer.gated_ffn(hidden_state, spec.intermediate_size, spec.hidden_size,
++              activation: spec.activation,
++              kernel_initializer: kernel_initializer(spec),
++              name: join(name, "ffn")
++            )
++          else
++            experts(hidden_state, spec, name: join(name, "ffn"))
++          end
++
++        %{
++          hidden_state: Axon.add(hidden_state, shortcut),
++          attention: attention,
++          self_attention_cache: self_attention_cache
++        }
++      end
++    )
++  end
++
++  # Multi-head latent attention without position embedding. Keys and
++  # values are projected from one compressed vector per token, and each
++  # key also has a part shared by all heads
++  defp latent_attention(hidden_state, block, spec, opts) do
++    name = opts[:name]
++    num_heads = spec.num_attention_heads
++    key_head_size = spec.attention_key_head_size
++    shared_key_size = spec.attention_shared_key_size
++    latent_size = spec.attention_latent_size
++
++    dense = fn input, units, name ->
++      Axon.dense(input, units,
++        use_bias: false,
++        kernel_initializer: kernel_initializer(spec),
++        name: name
++      )
++    end
++
++    query_size = num_heads * (key_head_size + shared_key_size)
++
++    query =
++      case spec.attention_query_latent_size do
++        nil ->
++          dense.(hidden_state, query_size, join(name, "query"))
++
++        query_latent_size ->
++          hidden_state
++          |> dense.(query_latent_size, join(name, "query_latent"))
++          |> Layers.rms_norm(epsilon: 1.0e-6, name: join(name, "query_latent_norm"))
++          |> dense.(query_size, join(name, "query"))
++      end
++
++    query = Layers.split_heads(query, num_heads)
++
++    latent_and_shared_key =
++      dense.(hidden_state, latent_size + shared_key_size, join(name, "latent"))
++
++    latent =
++      latent_and_shared_key
++      |> Axon.nx(&Nx.slice_along_axis(&1, 0, latent_size, axis: -1))
++      |> Layers.rms_norm(epsilon: 1.0e-6, name: join(name, "latent_norm"))
++      |> Axon.nx(&Nx.new_axis(&1, 2))
++
++    shared_key =
++      latent_and_shared_key
++      |> Axon.nx(&Nx.slice_along_axis(&1, latent_size, shared_key_size, axis: -1))
++      |> Axon.nx(&Nx.new_axis(&1, 2))
++
++    {latent, shared_key, attention_cache} =
++      Layers.Decoder.cached_attention_key_values(
++        latent,
++        shared_key,
++        block.self_attention_cache,
++        block.offset
++      )
++
++    key_value =
++      latent
++      |> Axon.nx(&Nx.squeeze(&1, axes: [2]))
++      |> dense.(
++        num_heads * (key_head_size + spec.attention_value_head_size),
++        join(name, "key_value")
++      )
++      |> Layers.split_heads(num_heads)
++
++    key =
++      Axon.layer(
++        fn key_value, shared_key, _opts ->
++          key = Nx.slice_along_axis(key_value, 0, key_head_size, axis: -1)
++          shared_key = Nx.broadcast(shared_key, put_elem(Nx.shape(key), 3, shared_key_size))
++          Nx.concatenate([key, Nx.as_type(shared_key, Nx.type(key))], axis: -1)
++        end,
++        [key_value, shared_key]
++      )
++
++    value =
++      Axon.nx(key_value, fn key_value ->
++        Nx.slice_along_axis(key_value, key_head_size, spec.attention_value_head_size, axis: -1)
++      end)
++
++    {attention_output, attention_weights} =
++      Layers.attention(
++        query,
++        key,
++        value,
++        block.attention_mask,
++        block.attention_head_mask,
++        Layers.none(),
++        block.offset,
++        causal: true
++      )
++
++    attention_output =
++      Layers.Transformer.output_projection(attention_output, spec.hidden_size,
++        use_bias: false,
++        kernel_initializer: kernel_initializer(spec),
++        name: join(name, "output")
++      )
++
++    {attention_output, attention_weights, attention_cache}
++  end
++
++  # Kimi Delta Attention, a gated delta rule whose state decays per
++  # key channel instead of per head
++  defp kimi_delta_attention(hidden_state, attention_mask, cache, spec, opts) do
++    name = opts[:name]
++    num_heads = spec.linear_attention_num_heads
++    head_size = spec.linear_attention_head_size
++    size = num_heads * head_size
++
++    # Padding positions must not contribute to the convolution or the
++    # recurrent state
++    hidden_state =
++      Layers.if_present attention_mask do
++        Axon.layer(
++          fn hidden_state, attention_mask, _opts ->
++            attention_mask =
++              attention_mask |> Nx.new_axis(-1) |> Nx.as_type(Nx.type(hidden_state))
++
++            Nx.multiply(hidden_state, attention_mask)
++          end,
++          [hidden_state, attention_mask]
++        )
++      else
++        hidden_state
++      end
++
++    dense = fn input, units, suffix ->
++      Axon.dense(input, units,
++        use_bias: false,
++        kernel_initializer: kernel_initializer(spec),
++        name: join(name, suffix)
++      )
++    end
++
++    query_key_value =
++      Axon.concatenate(
++        [
++          dense.(hidden_state, size, "query"),
++          dense.(hidden_state, size, "key"),
++          dense.(hidden_state, size, "value")
++        ],
++        axis: -1
++      )
++
++    {query_key_value, cache} = causal_conv(query_key_value, cache, spec, name: join(name, "conv"))
++    query_key_value = Axon.activation(query_key_value, spec.activation)
++
++    split_heads = fn index ->
++      query_key_value
++      |> Axon.nx(&Nx.slice_along_axis(&1, index * size, size, axis: -1))
++      |> Layers.split_heads(num_heads)
++    end
++
++    decay =
++      hidden_state
++      |> dense.(head_size, "decay_latent")
++      |> dense.(size, "decay")
++
++    beta = dense.(hidden_state, num_heads, "beta")
++
++    a_log = Axon.param("a_log", {num_heads}, initializer: :zeros)
++    dt_bias = Axon.param("dt_bias", {size}, initializer: :zeros)
++
++    {output, cache} =
++      Axon.layer(
++        &kimi_delta_rule_impl/9,
++        [
++          split_heads.(0),
++          split_heads.(1),
++          split_heads.(2),
++          beta,
++          decay,
++          a_log,
++          dt_bias,
++          Axon.optional(cache)
++        ],
++        name: join(name, "delta_rule"),
++        op_name: :kimi_delta_rule
++      )
++      |> Layers.unwrap_tuple(2)
++
++    output_gate =
++      hidden_state
++      |> dense.(head_size, "output_gate_latent")
++      |> dense.(size, "output_gate")
++      |> Layers.split_heads(num_heads)
++
++    Axon.layer(
++      &gated_rms_norm_impl/4,
++      [output, output_gate, Axon.param("weight", {head_size}, initializer: :ones)],
++      name: join(name, "norm"),
++      epsilon: spec.layer_norm_epsilon,
++      op_name: :gated_rms_norm
++    )
++    |> Layers.flatten_trailing()
++    |> dense.(spec.hidden_size, "output")
++    |> then(&{&1, cache})
++  end
++
++  defp causal_conv(input, cache, spec, opts) do
++    kernel_size = spec.linear_attention_conv_kernel_size
++
++    kernel =
++      Axon.param("kernel", {linear_attention_conv_size(spec), kernel_size},
++        initializer: kernel_initializer(spec)
++      )
++
++    Axon.layer(&causal_conv_impl/4, [input, kernel, Axon.optional(cache)],
++      name: opts[:name],
++      op_name: :causal_conv
++    )
++    |> Layers.unwrap_tuple(2)
++  end
++
++  deftransformp causal_conv_impl(input, kernel, cache, _opts \\ []) do
++    {channels, kernel_size} = Nx.shape(kernel)
++    {batch_size, sequence_length, ^channels} = Nx.shape(input)
++
++    # The convolution sees the inputs of the preceding tokens, which are
++    # kept in the cache, or zeros at the start of the sequence
++    window =
++      case cache do
++        %Axon.None{} ->
++          Nx.broadcast(
++            Nx.tensor(0, type: Nx.type(input)),
++            {batch_size, kernel_size - 1, channels}
++          )
++
++        %{conv_state: conv_state} ->
++          Nx.as_type(conv_state, Nx.type(input))
++      end
++
++    full_input = Nx.concatenate([window, input], axis: 1)
++
++    output =
++      0..(kernel_size - 1)
++      |> Enum.map(fn offset ->
++        full_input
++        |> Nx.slice_along_axis(offset, sequence_length, axis: 1)
++        |> Nx.multiply(kernel[[.., offset]])
++      end)
++      |> Enum.reduce(&Nx.add/2)
++
++    cache =
++      case cache do
++        %Axon.None{} ->
++          cache
++
++        %{conv_state: conv_state} = cache ->
++          window = Nx.slice_along_axis(full_input, sequence_length, kernel_size - 1, axis: 1)
++          %{cache | conv_state: Nx.as_type(window, Nx.type(conv_state))}
++      end
++
++    {output, cache}
++  end
++
++  # Each chunk holds pairwise decays for every key channel, so chunks are
++  # shorter than in the gated delta rule with one decay per head
++  @chunk_size 16
++
++  deftransformp kimi_delta_rule_impl(
++                  query,
++                  key,
++                  value,
++                  beta,
++                  decay,
++                  a_log,
++                  dt_bias,
++                  cache,
++                  _opts \\ []
++                ) do
++    type = Nx.type(value)
++    {batch_size, sequence_length, num_heads, head_size} = Nx.shape(key)
++
++    beta = Nx.sigmoid(Nx.as_type(beta, :f32))
++
++    decay =
++      decay(decay, a_log, dt_bias)
++      |> Nx.reshape({batch_size, sequence_length, num_heads, head_size})
++
++    state =
++      case cache do
++        %Axon.None{} ->
++          Nx.broadcast(0.0, {batch_size, num_heads, head_size, Nx.axis_size(value, -1)})
++
++        %{recurrent_state: recurrent_state} ->
++          Nx.as_type(recurrent_state, :f32)
++      end
++
++    {query, key} = normalize_query_key(Nx.as_type(query, :f32), Nx.as_type(key, :f32))
++    value = Nx.as_type(value, :f32)
++
++    {output, state} =
++      if sequence_length == 1 do
++        delta_rule_single(query, key, value, beta, decay, state)
++      else
++        padding = rem(@chunk_size - rem(sequence_length, @chunk_size), @chunk_size)
++        delta_rule_chunked(query, key, value, beta, decay, state, padding: padding)
++      end
++
++    cache =
++      case cache do
++        %Axon.None{} ->
++          cache
++
++        %{recurrent_state: recurrent_state} = cache ->
++          %{cache | recurrent_state: Nx.as_type(state, Nx.type(recurrent_state))}
++      end
++
++    {Nx.as_type(output, type), cache}
++  end
++
++  defnp decay(decay, a_log, dt_bias) do
++    x = Nx.as_type(decay, :f32) + Nx.as_type(dt_bias, :f32)
++    # Matches the reference softplus, which is linear above 20
++    softplus = Nx.select(x > 20, x, Nx.log1p(Nx.exp(x)))
++    {batch_size, sequence_length, _} = Nx.shape(softplus)
++    num_heads = Nx.axis_size(a_log, 0)
++    softplus = Nx.reshape(softplus, {batch_size, sequence_length, num_heads, :auto})
++    rate = a_log |> Nx.as_type(:f32) |> Nx.exp() |> Nx.reshape({1, 1, num_heads, 1})
++    Nx.reshape(-rate * softplus, {batch_size, sequence_length, :auto})
++  end
++
++  defnp normalize_query_key(query, key) do
++    {l2_normalize(query) / Nx.sqrt(Nx.axis_size(query, -1)), l2_normalize(key)}
++  end
++
++  defnp l2_normalize(x) do
++    x * Nx.rsqrt(Nx.sum(x * x, axes: [-1], keep_axes: true) + 1.0e-6)
++  end
++
++  defnp delta_rule_single(query, key, value, beta, decay, state) do
++    take = &Nx.squeeze(&1, axes: [1])
++    {q, k, v, b, d} = {take.(query), take.(key), take.(value), take.(beta), take.(decay)}
++
++    state = state * Nx.new_axis(Nx.exp(d), -1)
++    memory = Nx.sum(state * Nx.new_axis(k, -1), axes: [2])
++    delta = (v - memory) * Nx.new_axis(b, -1)
++    state = state + Nx.new_axis(k, -1) * Nx.new_axis(delta, 2)
++    output = Nx.sum(state * Nx.new_axis(q, -1), axes: [2])
++
++    {Nx.new_axis(output, 1), state}
++  end
++
++  # Within a chunk, the delta rule updates are condensed into matrix
++  # products by solving a unit lower triangular system, so the loop runs
++  # once per chunk instead of once per token
++  defnp delta_rule_chunked(query, key, value, beta, decay, state, opts \\ []) do
++    opts = keyword!(opts, [:padding])
++    {batch_size, sequence_length, num_heads, value_head_size} = Nx.shape(value)
++
++    query = to_chunks(query, opts[:padding])
++    key = to_chunks(key, opts[:padding])
++    value = to_chunks(value, opts[:padding])
++    beta = to_chunks(beta, opts[:padding])
++    decay = to_chunks(decay, opts[:padding])
++
++    key_beta = key * Nx.new_axis(beta, -1)
++    value_beta = value * Nx.new_axis(beta, -1)
++
++    # The decay of each key channel accumulated from the start of the
++    # chunk to each position, and between each pair of positions
++    cumulative_decay = Nx.cumulative_sum(decay, axis: 3)
++
++    lower =
++      Nx.greater_equal(
++        Nx.iota({@chunk_size, @chunk_size, 1}, axis: 0),
++        Nx.iota({@chunk_size, @chunk_size, 1}, axis: 1)
++      )
++
++    pairwise = Nx.new_axis(cumulative_decay, 4) - Nx.new_axis(cumulative_decay, 3)
++
++    pairwise_decay =
++      Nx.exp(Nx.select(Nx.broadcast(lower, pairwise), pairwise, Nx.Constants.neg_infinity(:f32)))
++
++    system = Nx.sum(Nx.new_axis(key_beta, 4) * Nx.new_axis(key, 3) * pairwise_decay, axes: [-1])
++    intra_chunk = Nx.sum(Nx.new_axis(query, 4) * Nx.new_axis(key, 3) * pairwise_decay, axes: [-1])
++
++    strictly_lower =
++      Nx.greater(
++        Nx.iota({@chunk_size, @chunk_size}, axis: 0),
++        Nx.iota({@chunk_size, @chunk_size}, axis: 1)
++      )
++
++    unit_lower =
++      Nx.select(Nx.broadcast(strictly_lower, system), system, 0.0) + Nx.eye(@chunk_size)
++
++    decayed_key_beta = key_beta * Nx.exp(cumulative_decay)
++
++    solution =
++      Nx.LinAlg.triangular_solve(
++        unit_lower,
++        Nx.concatenate([value_beta, decayed_key_beta], axis: 4),
++        lower: true
++      )
++
++    new_values = Nx.slice_along_axis(solution, 0, value_head_size, axis: 4)
++
++    key_cumulative_decay =
++      Nx.slice_along_axis(solution, value_head_size, Nx.axis_size(decayed_key_beta, 4), axis: 4)
++
++    last_decay = Nx.slice_along_axis(cumulative_decay, @chunk_size - 1, 1, axis: 3)
++    query = query * Nx.exp(cumulative_decay)
++    key = key * Nx.exp(last_decay - cumulative_decay)
++    # Each key channel decays its row of the state
++    chunk_decay = last_decay |> Nx.exp() |> Nx.transpose(axes: [0, 1, 2, 4, 3])
++
++    {output, state} =
++      chunk_scan(query, key, new_values, key_cumulative_decay, intra_chunk, chunk_decay, state)
++
++    output =
++      output
++      |> Nx.reshape({batch_size, num_heads, :auto, value_head_size})
++      |> Nx.slice_along_axis(0, sequence_length, axis: 2)
++      |> Nx.transpose(axes: [0, 2, 1, 3])
++
++    {output, state}
++  end
++
++  # Moves the heads before the sequence, pads the sequence to whole chunks
++  # and splits it into chunks
++  deftransformp to_chunks(tensor, padding) do
++    [batch_size, sequence_length, num_heads | rest] = tensor |> Nx.shape() |> Tuple.to_list()
++    axes = [0, 2, 1 | Enum.drop(Nx.axes(tensor), 3)]
++
++    padding_config = [
++      {0, 0, 0},
++      {0, 0, 0},
++      {0, padding, 0} | Enum.map(rest, fn _ -> {0, 0, 0} end)
++    ]
++
++    num_chunks = div(sequence_length + padding, @chunk_size)
++
++    tensor
++    |> Nx.transpose(axes: axes)
++    |> Nx.pad(0.0, padding_config)
++    |> Nx.reshape(List.to_tuple([batch_size, num_heads, num_chunks, @chunk_size | rest]))
++  end
++
++  # The number of chunks is known when building the graph, so the loop is
++  # unrolled into a single graph
++  deftransformp chunk_scan(
++                  query,
++                  key,
++                  new_values,
++                  key_cumulative_decay,
++                  intra_chunk,
++                  chunk_decay,
++                  state
++                ) do
++    num_chunks = Nx.axis_size(new_values, 2)
++
++    {outputs, state} =
++      Enum.map_reduce(0..(num_chunks - 1), state, fn index, state ->
++        take = &(&1 |> Nx.slice_along_axis(index, 1, axis: 2) |> Nx.squeeze(axes: [2]))
++
++        delta =
++          Nx.subtract(
++            take.(new_values),
++            Nx.dot(take.(key_cumulative_decay), [3], [0, 1], state, [2], [0, 1])
++          )
++
++        output =
++          Nx.add(
++            Nx.dot(take.(query), [3], [0, 1], state, [2], [0, 1]),
++            Nx.dot(take.(intra_chunk), [3], [0, 1], delta, [2], [0, 1])
++          )
++
++        state =
++          Nx.add(
++            Nx.multiply(state, take.(chunk_decay)),
++            Nx.dot(take.(key), [2], [0, 1], delta, [2], [0, 1])
++          )
++
++        {output, state}
++      end)
++
++    {Nx.stack(outputs, axis: 2), state}
++  end
++
++  defnp gated_rms_norm_impl(input, gate, weight, opts \\ []) do
++    opts = keyword!(opts, epsilon: 1.0e-6, mode: :inference)
++    type = Nx.type(input)
++
++    input = Nx.as_type(input, :f32)
++    variance = Nx.mean(input * input, axes: [-1], keep_axes: true)
++    normalized = input * Nx.rsqrt(variance + opts[:epsilon])
++
++    Nx.as_type(Nx.as_type(weight, :f32) * normalized * Nx.sigmoid(Nx.as_type(gate, :f32)), type)
++  end
++
++  defp experts(hidden_state, spec, opts) do
++    name = opts[:name]
++
++    routed =
++      Layers.Transformer.mixture_of_experts(
++        hidden_state,
++        spec.expert_intermediate_size,
++        spec.hidden_size,
++        num_experts: spec.num_experts,
++        num_experts_per_token: spec.num_experts_per_token,
++        activation: spec.activation,
++        router_activation: :sigmoid,
++        normalize_top_k: spec.normalize_top_k,
++        selection_bias: true,
++        output_scale: spec.expert_output_scale,
++        kernel_initializer: kernel_initializer(spec),
++        name: name
++      )
++
++    shared =
++      Layers.Transformer.gated_ffn(
++        hidden_state,
++        spec.expert_intermediate_size * spec.num_shared_experts,
++        spec.hidden_size,
++        activation: spec.activation,
++        kernel_initializer: kernel_initializer(spec),
++        name: join(name, "shared_expert")
++      )
++
++    Axon.add(routed, shared)
++  end
++
++  defp layer_types(spec) do
++    spec.layer_types ||
++      for index <- 0..(spec.num_blocks - 1) do
++        if index > 0 and rem(index, 4) == 0, do: :full_attention, else: :linear_attention
++      end
++  end
++
++  defp linear_attention_conv_size(spec) do
++    3 * spec.linear_attention_num_heads * spec.linear_attention_head_size
++  end
++
++  defp kernel_initializer(spec) do
++    Axon.Initializers.normal(scale: spec.initializer_scale)
++  end
++
++  defimpl Bumblebee.HuggingFace.Transformers.Config do
++    def load(spec, data) do
++      import Shared.Converters
++
++      linear_attention = data["linear_attn_config"] || %{}
++      num_blocks = data["num_hidden_layers"]
++
++      if (data["num_expert_group"] || 1) != 1 do
++        raise ArgumentError,
++              "Kimi Linear with expert groups is not supported, got num_expert_group: " <>
++                inspect(data["num_expert_group"])
++      end
++
++      # The layer lists count from 1
++      layer_types =
++        case linear_attention do
++          %{"full_attn_layers" => full, "kda_layers" => _} when is_integer(num_blocks) ->
++            [
++              layer_types:
++                for index <- 1..num_blocks do
++                  if index in full, do: :full_attention, else: :linear_attention
++                end
++            ]
++
++          _ ->
++            []
++        end
++
++      opts =
++        convert!(data,
++          vocab_size: {"vocab_size", number()},
++          max_positions: {"model_max_length", number()},
++          hidden_size: {"hidden_size", number()},
++          intermediate_size: {"intermediate_size", number()},
++          expert_intermediate_size: {"moe_intermediate_size", number()},
++          num_blocks: {"num_hidden_layers", number()},
++          num_attention_heads: {"num_attention_heads", number()},
++          attention_latent_size: {"kv_lora_rank", number()},
++          attention_query_latent_size: {"q_lora_rank", optional(number())},
++          attention_key_head_size: {"qk_nope_head_dim", number()},
++          attention_shared_key_size: {"qk_rope_head_dim", number()},
++          attention_value_head_size: {"v_head_dim", number()},
++          num_experts: {"num_experts", number()},
++          num_experts_per_token: {"num_experts_per_token", number()},
++          num_shared_experts: {"num_shared_experts", number()},
++          num_dense_blocks: {"first_k_dense_replace", number()},
++          normalize_top_k: {"moe_renormalize", boolean()},
++          expert_output_scale: {"routed_scaling_factor", number()},
++          activation: {"hidden_act", activation()},
++          initializer_scale: {"initializer_range", number()},
++          layer_norm_epsilon: {"rms_norm_eps", number()},
++          tie_word_embeddings: {"tie_word_embeddings", boolean()}
++        ) ++
++          convert!(linear_attention,
++            linear_attention_num_heads: {"num_heads", number()},
++            linear_attention_head_size: {"head_dim", number()},
++            linear_attention_conv_kernel_size: {"short_conv_kernel_size", number()}
++          ) ++ layer_types ++ Shared.common_options_from_transformers(data, spec)
++
++      @for.config(spec, opts)
++    end
++  end
++
++  defimpl Bumblebee.HuggingFace.Transformers.Model do
++    def params_mapping(spec) do
++      # MLX conversions rename the expert blocks and the convolutions
++      block = fn name -> "model.layers.{n}." <> name end
++      moe = fn name -> [block.("block_sparse_moe." <> name), block.("mlp." <> name)] end
++
++      stack = fn projection, mlx_projection ->
++        sources =
++          for expert <- 0..(spec.num_experts - 1) do
++            [{block.("block_sparse_moe.experts.#{expert}.#{projection}"), "weight"}]
++          end
++
++        [
++          {sources, &Nx.stack/1},
++          {[[{block.("mlp.switch_mlp.#{mlx_projection}"), "weight"}]], fn [kernel] -> kernel end}
++        ]
++      end
++
++      conv_kernel = fn kind ->
++        [
++          {block.("self_attn.#{kind}_conv1d"), "weight"},
++          {block.("self_attn.#{kind}_conv.conv"), "weight"}
++        ]
++      end
++
++      %{
++        "embedder.token_embedding" => "model.embed_tokens",
++        "decoder.blocks.{n}.self_attention_norm" => block.("input_layernorm"),
++        "decoder.blocks.{n}.self_attention.query" => block.("self_attn.q_proj"),
++        "decoder.blocks.{n}.self_attention.query_latent" => block.("self_attn.q_a_proj"),
++        "decoder.blocks.{n}.self_attention.query_latent_norm" =>
++          block.("self_attn.q_a_layernorm"),
++        "decoder.blocks.{n}.self_attention.latent" => block.("self_attn.kv_a_proj_with_mqa"),
++        "decoder.blocks.{n}.self_attention.latent_norm" => block.("self_attn.kv_a_layernorm"),
++        "decoder.blocks.{n}.self_attention.key_value" => block.("self_attn.kv_b_proj"),
++        "decoder.blocks.{n}.self_attention.output" => block.("self_attn.o_proj"),
++        "decoder.blocks.{n}.linear_attention.query" => block.("self_attn.q_proj"),
++        "decoder.blocks.{n}.linear_attention.key" => block.("self_attn.k_proj"),
++        "decoder.blocks.{n}.linear_attention.value" => block.("self_attn.v_proj"),
++        # The PyTorch kernels are {channels, 1, kernel_size}, and the MLX
++        # ones {channels, kernel_size, 1}
++        "decoder.blocks.{n}.linear_attention.conv" => %{
++          "kernel" =>
++            {[conv_kernel.("q"), conv_kernel.("k"), conv_kernel.("v")],
++             fn kernels ->
++               kernels
++               |> Enum.map(fn kernel ->
++                 {channels, a, b} = Nx.shape(kernel)
++
++                 if a == 1,
++                   do: Nx.reshape(kernel, {channels, b}),
++                   else: Nx.reshape(kernel, {channels, a})
++               end)
++               |> Nx.concatenate()
++             end}
++        },
++        "decoder.blocks.{n}.linear_attention.decay_latent" => block.("self_attn.f_a_proj"),
++        "decoder.blocks.{n}.linear_attention.decay" => block.("self_attn.f_b_proj"),
++        "decoder.blocks.{n}.linear_attention.beta" => block.("self_attn.b_proj"),
++        "decoder.blocks.{n}.linear_attention.delta_rule" => %{
++          "a_log" => {[{block.("self_attn"), "A_log"}], fn [x] -> Nx.flatten(x) end},
++          "dt_bias" => {[{block.("self_attn"), "dt_bias"}], fn [x] -> Nx.flatten(x) end}
++        },
++        "decoder.blocks.{n}.linear_attention.output_gate_latent" => block.("self_attn.g_a_proj"),
++        "decoder.blocks.{n}.linear_attention.output_gate" => block.("self_attn.g_b_proj"),
++        "decoder.blocks.{n}.linear_attention.norm" => block.("self_attn.o_norm"),
++        "decoder.blocks.{n}.linear_attention.output" => block.("self_attn.o_proj"),
++        "decoder.blocks.{n}.output_norm" => block.("post_attention_layernorm"),
++        "decoder.blocks.{n}.ffn.gate" => block.("mlp.gate_proj"),
++        "decoder.blocks.{n}.ffn.intermediate" => block.("mlp.up_proj"),
++        "decoder.blocks.{n}.ffn.output" => block.("mlp.down_proj"),
++        "decoder.blocks.{n}.ffn.router" => moe.("gate"),
++        "decoder.blocks.{n}.ffn.experts" => %{
++          "gate_kernel" => stack.("w1", "gate_proj"),
++          "intermediate_kernel" => stack.("w3", "up_proj"),
++          "output_kernel" => stack.("w2", "down_proj"),
++          "selection_bias" =>
++            {[
++               [
++                 {block.("block_sparse_moe.gate"), "e_score_correction_bias"},
++                 {block.("mlp"), "e_score_correction_bias"}
++               ]
++             ], fn [bias] -> bias end}
++        },
++        "decoder.blocks.{n}.ffn.shared_expert.gate" => moe.("shared_experts.gate_proj"),
++        "decoder.blocks.{n}.ffn.shared_expert.intermediate" => moe.("shared_experts.up_proj"),
++        "decoder.blocks.{n}.ffn.shared_expert.output" => moe.("shared_experts.down_proj"),
++        "output_norm" => "model.norm",
++        "language_modeling_head.output" =>
++          if(spec.tie_word_embeddings, do: "model.embed_tokens", else: "lm_head")
++      }
++    end
++  end
++end
+diff --git a/test/bumblebee/layers/mixture_of_experts_test.exs b/test/bumblebee/layers/mixture_of_experts_test.exs
+index 92f3ab0..15ae0a1 100644
+--- a/test/bumblebee/layers/mixture_of_experts_test.exs
++++ b/test/bumblebee/layers/mixture_of_experts_test.exs
+@@ -21,7 +21,8 @@ defmodule Bumblebee.Layers.MixtureOfExpertsTest do
+       gate,
+       intermediate,
+       output,
+-      [num_experts_per_token: 2, activation: :silu] ++ opts
++      %Axon.None{},
++      [num_experts_per_token: 2, activation: :silu, output_scale: 1.0] ++ opts
+     )
+   end
+ 
+@@ -80,4 +81,51 @@ defmodule Bumblebee.Layers.MixtureOfExpertsTest do
+       assert_all_close(changed_output[[0, 0]], output[[0, 0]])
+     end
+   end
++
++  test "the selection bias chooses the experts and the output scale multiplies their weights" do
++    key = Nx.Random.key(0)
++    {x, key} = Nx.Random.normal(key, shape: {1, 1, 4})
++    {gate, intermediate, output} = kernels(key)
++    # Experts 0 and 2 score highest, but the bias makes experts 1 and 3 the chosen ones
++    router_logits = Nx.tensor([[[2.0, 0.0, 1.0, -1.0]]])
++    selection_bias = Nx.tensor([0.0, 1.0, 0.0, 1.0])
++
++    result =
++      Bumblebee.Layers.mixture_of_experts_impl(
++        x,
++        router_logits,
++        gate,
++        intermediate,
++        output,
++        selection_bias,
++        num_experts_per_token: 2,
++        activation: :silu,
++        router_activation: :sigmoid,
++        normalize_top_k: true,
++        weight_inputs: false,
++        output_scale: 2.5
++      )
++
++    # The weights come from the sigmoid scores of the chosen experts, without the bias
++    scores = Axon.Activations.sigmoid(Nx.tensor([0.0, -1.0]))
++    weights = scores |> Nx.divide(Nx.sum(scores)) |> Nx.multiply(2.5)
++
++    expected =
++      [1, 3]
++      |> Enum.with_index()
++      |> Enum.map(fn {expert, i} ->
++        input = x[[0, 0]]
++
++        hidden =
++          Nx.multiply(
++            Axon.Activations.silu(Nx.dot(gate[expert], input)),
++            Nx.dot(intermediate[expert], input)
++          )
++
++        Nx.multiply(Nx.dot(output[expert], hidden), weights[i])
++      end)
++      |> Enum.reduce(&Nx.add/2)
++
++    assert_all_close(result[[0, 0]], expected)
++  end
+ end
+diff --git a/test/bumblebee/text/kimi_linear_test.exs b/test/bumblebee/text/kimi_linear_test.exs
+new file mode 100644
+index 0000000..4d05104
+--- /dev/null
++++ b/test/bumblebee/text/kimi_linear_test.exs
+@@ -0,0 +1,108 @@
++defmodule Bumblebee.Text.KimiLinearTest do
++  use ExUnit.Case, async: false
++
++  import Bumblebee.TestHelpers
++
++  @moduletag model_test_tags()
++
++  # 22 tokens span two chunks of the chunked delta rule
++  defp inputs() do
++    input_ids = Nx.iota({1, 22}) |> Nx.multiply(37) |> Nx.remainder(1000) |> Nx.add(10)
++    attention_mask = Nx.concatenate([Nx.broadcast(1, {1, 20}), Nx.broadcast(0, {1, 2})], axis: 1)
++    %{"input_ids" => input_ids, "attention_mask" => attention_mask}
++  end
++
++  test ":base" do
++    assert {:ok, %{model: model, params: params, spec: spec}} =
++             Bumblebee.load_model({:hf, "bumblebee-testing/tiny-random-KimiLinearForCausalLM"},
++               architecture: :base
++             )
++
++    assert %Bumblebee.Text.KimiLinear{architecture: :base} = spec
++
++    assert spec.layer_types == [
++             :linear_attention,
++             :linear_attention,
++             :linear_attention,
++             :full_attention,
++             :linear_attention
++           ]
++
++    outputs = Axon.predict(model, params, inputs())
++
++    assert Nx.shape(outputs.hidden_state) == {1, 22, 32}
++
++    assert_all_close(
++      outputs.hidden_state[[.., 1..3, 1..3]],
++      Nx.tensor([
++        [[-2.3836, -0.3281, -0.2326], [-0.5739, -0.6473, -1.1054], [-1.1508, 0.2755, -1.6886]]
++      ])
++    )
++  end
++
++  test ":for_causal_language_modeling" do
++    assert {:ok, %{model: model, params: params, spec: spec}} =
++             Bumblebee.load_model({:hf, "bumblebee-testing/tiny-random-KimiLinearForCausalLM"})
++
++    assert %Bumblebee.Text.KimiLinear{architecture: :for_causal_language_modeling} = spec
++
++    outputs = Axon.predict(model, params, inputs())
++
++    assert Nx.shape(outputs.logits) == {1, 22, 1024}
++
++    assert_all_close(
++      outputs.logits[[.., 1..3, 1..3]],
++      Nx.tensor([
++        [[0.0169, -1.5670, -1.8869], [-2.0884, -0.5399, 2.0655], [-0.4413, -4.2156, -0.3226]]
++      ])
++    )
++
++    # In the second chunk
++    assert_all_close(
++      outputs.logits[[.., 17..19, 1..3]],
++      Nx.tensor([
++        [[-2.1705, 0.2246, 3.6935], [0.5027, 0.3806, 0.9272], [1.2712, -0.3505, 3.0494]]
++      ])
++    )
++  end
++
++  test "left padding does not change the logits of the real tokens" do
++    assert {:ok, %{model: model, params: params}} =
++             Bumblebee.load_model({:hf, "bumblebee-testing/tiny-random-KimiLinearForCausalLM"})
++
++    %{"input_ids" => input_ids} = inputs()
++    input_ids = input_ids[[.., 0..17]]
++
++    padded = %{
++      "input_ids" => Nx.concatenate([Nx.tensor([[0, 0, 0]]), input_ids], axis: 1),
++      "attention_mask" =>
++        Nx.concatenate([Nx.broadcast(0, {1, 3}), Nx.broadcast(1, {1, 18})], axis: 1)
++    }
++
++    unpadded = Axon.predict(model, params, %{"input_ids" => input_ids})
++    padded = Axon.predict(model, params, padded)
++
++    assert_all_close(padded.logits[[.., 3..-1//1]], unpadded.logits, atol: 1.0e-4)
++  end
++
++  test "generation" do
++    assert {:ok, %{model: model, params: params, spec: spec}} =
++             Bumblebee.load_model({:hf, "bumblebee-testing/tiny-random-KimiLinearForCausalLM"})
++
++    generation_config =
++      Bumblebee.configure(Bumblebee.Text.GenerationConfig,
++        max_new_tokens: 8,
++        strategy: %{type: :greedy_search},
++        eos_token_id: nil,
++        pad_token_id: 0
++      )
++
++    %{"input_ids" => input_ids} = inputs()
++    inputs = %{"input_ids" => input_ids[[.., 0..17]], "seed" => Nx.tensor([0])}
++
++    generate = Bumblebee.Text.Generation.build_generate(model, spec, generation_config)
++    %{token_ids: token_ids} = generate.(params, inputs)
++
++    assert_equal(token_ids, Nx.tensor([[34, 979, 384, 635, 227, 793, 841, 152]]))
++  end
++end

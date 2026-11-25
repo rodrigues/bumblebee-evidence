@@ -1,0 +1,3 @@
+## tiny-random-KimiLinearForCausalLM
+
+Every parameter loads, and no tensor is unused.
