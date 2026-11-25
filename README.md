@@ -10,6 +10,9 @@ Every block after the first has 256 experts, 8 per token, chosen by sigmoid scor
 The mixture of experts layer gains two options for this, the selection bias and the output scale.
 Bumblebee reads Moonshot's original weight names and those of the MLX conversion.
 
+The tokenizer ships only as a tiktoken vocabulary, `tiktoken.model`, with Python code, so branch `tiktoken-tokenizers`, on top of `kimi-linear`, converts it on load to the format of the Rust tokenizers library, as transformers does ([`tiktoken.patch`](bumblebee/tiktoken.patch)).
+The split pattern lives in the Python code, so Bumblebee carries it for the new tokenizer type `:kimi`.
+
 Every result is in [`bumblebee/outputs/`](bumblebee/outputs), so nothing needs running to read it; [Reproduce](#reproduce), at the end, reruns everything.
 All runs were on macOS (Apple M5 Pro, 64 GiB), with Elixir 1.20.5 and OTP 29.1.2.
 
@@ -38,11 +41,15 @@ Where the top choices differ, mlx-lm's margin between its top two tokens is at m
 The checkpoint loads with nothing missing, mismatched or unused: [`params-48b.txt`](bumblebee/outputs/params-48b.txt) is empty because the load logged no differences.
 The EMLX used is the `compiled-while-body` branch, which compiles the generation loop's body on the GPU; without it, decode took 15.3 ms per token.
 
-Bumblebee cannot load this model's tokenizer, which ships as `tiktoken.model` with Python code and no `tokenizer.json`, so the Bumblebee script takes the token ids that mlx-lm's tokenizer gave, from the reference.
+`bumblebee_48b.exs` feeds the token ids that mlx-lm's tokenizer gave, from the reference, so it compares the model alone.
+
+## End to end in Elixir
+
+[`chat_48b.exs`](bumblebee/chat_48b.exs) answers the capital prompt with Bumblebee's own tokenizer and a text generation serving, on the `tiktoken-tokenizers` branch, and records [`chat-48b.json`](bumblebee/outputs/chat-48b.json): the prompt's ids are identical to those of the Python tokenizer, and the answer is "The capital of France is Paris.", stopping at the end of the turn.
+The tokenizer test on the branch also checks a text with accents, Chinese and an emoji, its decoding, and the ids of the special tokens against the Python tokenizer.
 
 ## Not checked
 
-- The tokenizer, which Bumblebee does not load.
 - The bfloat16 checkpoint against transformers: it is about 98 GB and does not fit.
 - Expert groups, which neither the Instruct checkpoint nor its MLX conversion uses; Bumblebee refuses a config with more than one.
 - Prompts long enough to fill many chunks of the delta rule on the real checkpoint.
@@ -57,6 +64,8 @@ BUMBLEBEE_PATH=path/to/bumblebee ./tests.sh
 (cd path/to/bumblebee && MIX_ENV=test mix run "$OLDPWD/params.exs")
 uv run reference_48b.py
 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_48b.exs
+BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir chat_48b.exs
 ```
 
-The 48B scripts read the checkpoint from the Hugging Face cache, so download `mlx-community/Kimi-Linear-48B-A3B-Instruct-4bit` first with `hf download`.
+`reference_48b.py` and `bumblebee_48b.exs` read the checkpoint from the Hugging Face cache, so download `mlx-community/Kimi-Linear-48B-A3B-Instruct-4bit` first with `hf download`.
+`chat_48b.exs` loads it through Bumblebee, which downloads its own copy of the 27.6 GB into Bumblebee's cache.

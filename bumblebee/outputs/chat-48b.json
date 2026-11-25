@@ -1,0 +1,25 @@
+{
+  "prompt": "<|im_user|>user<|im_middle|>What is the capital of France? Answer in one sentence.<|im_end|><|im_assistant|>assistant<|im_middle|>",
+  "input_ids": [
+    163587,
+    2482,
+    163601,
+    5376,
+    387,
+    276,
+    10484,
+    318,
+    15383,
+    30,
+    61982,
+    306,
+    1101,
+    23819,
+    13,
+    163586,
+    163588,
+    69702,
+    163601
+  ],
+  "answer": "The capital of France is Paris."
+}
