@@ -1,0 +1,5 @@
+# Parameter log of mistralai/Ministral-3-3B-Instruct-2512-BF16
+
+- Log sections: ["the following PyTorch parameters were unused:"]
+- Vision tower and projector tensors listed: 129
+- Other tensors listed: 0 []
