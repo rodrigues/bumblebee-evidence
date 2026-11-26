@@ -7,7 +7,7 @@ Kimi Linear interleaves two kinds of attention, and Bumblebee implements both:
 - Multi-head latent attention, in the rest, without position embedding: keys and values are projected from one compressed vector per token, and the cache keeps those compressed vectors.
 
 Every block after the first has 256 experts, 8 per token, chosen by sigmoid scores plus a selection bias, weighted by the scores alone, renormalized and scaled by 2.446, beside a shared expert.
-The mixture of experts layer gains two options for this, the selection bias and the output scale.
+Kimi Linear routes in its own model, with the selection bias and the output scale, and passes the chosen experts and their weights to the shared mixture of experts layer.
 Bumblebee reads Moonshot's original weight names and those of the MLX conversion.
 
 The tokenizer ships only as a tiktoken vocabulary, `tiktoken.model`, with Python code, so branch `tiktoken-tokenizers`, on top of `kimi-linear`, converts it on load to the format of the Rust tokenizers library, as transformers does ([`tiktoken.patch`](bumblebee/tiktoken.patch)).
