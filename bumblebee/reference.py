@@ -17,7 +17,15 @@ with torch.no_grad():
     short = model(input_ids=input_ids[:, :2]).logits
     generated = model.generate(input_ids[:, :8], attention_mask=attention_mask[:, :8], max_new_tokens=8, do_sample=False, eos_token_id=None, pad_token_id=0)
 
+# The checkpoint normalizes the chosen experts' probabilities; this is the default of Qwen3MoeConfig, which does not
+unnormalized = Qwen3MoeForCausalLM.from_pretrained(repo, dtype=torch.float32, norm_topk_prob=False).eval()
+with torch.no_grad():
+    unnormalized_logits = unnormalized(input_ids=input_ids, attention_mask=attention_mask).logits
+    unnormalized_short = unnormalized(input_ids=input_ids[:, :2]).logits
+
 reference = {
+    "logits without normalizing the chosen experts' probabilities": unnormalized_logits[:, 1:4, 1:4].tolist(),
+    "logits of 2 tokens without normalizing the chosen experts' probabilities": unnormalized_short[:, :, 1:4].tolist(),
     "logits": logits[:, 1:4, 1:4].tolist(),
     "logits of 2 tokens": short[:, :, 1:4].tolist(),
     "generated": generated[0, 8:].tolist(),

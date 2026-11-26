@@ -326,7 +326,7 @@ index 525f5de..3d65bf8 100644
    Adds a multi-head attention block to the network.
  
 diff --git a/lib/bumblebee/text/qwen3.ex b/lib/bumblebee/text/qwen3.ex
-index a959e9d..680207c 100644
+index a959e9d..5da4058 100644
 --- a/lib/bumblebee/text/qwen3.ex
 +++ b/lib/bumblebee/text/qwen3.ex
 @@ -68,6 +68,34 @@ defmodule Bumblebee.Text.Qwen3 do
@@ -337,8 +337,8 @@ index a959e9d..680207c 100644
 +      num_experts: [
 +        default: nil,
 +        doc: """
-+        the number of experts in the mixture-of-experts blocks. When `nil`, every block
-+        uses a dense feed-forward network
++        the number of experts in the mixture-of-experts blocks. When `nil` or 0, every
++        block uses a dense feed-forward network
 +        """
 +      ],
 +      num_experts_per_token: [
@@ -359,7 +359,7 @@ index a959e9d..680207c 100644
 +        doc: "the indices of blocks that use a dense feed-forward network instead of experts"
 +      ],
 +      normalize_top_k: [
-+        default: true,
++        default: false,
 +        doc: "whether to normalize the router probabilities of the chosen experts to sum to 1"
        ]
      ] ++
@@ -394,7 +394,7 @@ index a959e9d..680207c 100644
            |> Axon.add(shortcut)
  
          %{
-@@ -386,6 +415,64 @@ defmodule Bumblebee.Text.Qwen3 do
+@@ -386,6 +415,66 @@ defmodule Bumblebee.Text.Qwen3 do
      )
    end
  
@@ -452,14 +452,16 @@ index a959e9d..680207c 100644
 +  end
 +
 +  defp expert_block?(spec, index) do
-+    spec.num_experts != nil and index not in spec.dense_block_indices and
++    experts?(spec) and index not in spec.dense_block_indices and
 +      rem(index + 1, spec.expert_block_step) == 0
 +  end
++
++  defp experts?(spec), do: spec.num_experts != nil and spec.num_experts > 0
 +
    defp language_modeling_head(hidden_state, spec, opts) do
      name = opts[:name]
  
-@@ -416,7 +503,13 @@ defmodule Bumblebee.Text.Qwen3 do
+@@ -416,7 +505,13 @@ defmodule Bumblebee.Text.Qwen3 do
            intermediate_size: {"intermediate_size", number()},
            activation: {"hidden_act", activation()},
            initializer_scale: {"initializer_range", number()},
@@ -474,13 +476,13 @@ index a959e9d..680207c 100644
          ) ++
            Shared.rotary_embedding_options_from_transformers(data) ++
            Shared.common_options_from_transformers(data, spec)
-@@ -427,7 +520,36 @@ defmodule Bumblebee.Text.Qwen3 do
+@@ -427,7 +522,36 @@ defmodule Bumblebee.Text.Qwen3 do
  
    defimpl Bumblebee.HuggingFace.Transformers.Model do
      def params_mapping(spec) do
 -      %{
 +      experts =
-+        if spec.num_experts do
++        if spec.num_experts != nil and spec.num_experts > 0 do
 +          # Checkpoints store either one weight per expert, or, as MLX
 +          # checkpoints do, all experts stacked in one weight
 +          stack = fn projection ->
@@ -512,7 +514,7 @@ index a959e9d..680207c 100644
          "embedder.token_embedding" => "model.embed_tokens",
          "decoder.blocks.{n}.self_attention.query" => "model.layers.{n}.self_attn.q_proj",
          "decoder.blocks.{n}.self_attention.key" => "model.layers.{n}.self_attn.k_proj",
-@@ -444,7 +566,7 @@ defmodule Bumblebee.Text.Qwen3 do
+@@ -444,7 +568,7 @@ defmodule Bumblebee.Text.Qwen3 do
          "language_modeling_head.output" =>
            if(spec.tie_word_embeddings, do: "model.embed_tokens", else: "lm_head"),
          "sequence_classification_head.output" => "score"
@@ -639,10 +641,39 @@ index b12baa4..426bcc6 100644
 +  end
  end
 diff --git a/test/bumblebee/text/qwen3_test.exs b/test/bumblebee/text/qwen3_test.exs
-index 5134d6d..6540ee8 100644
+index 5134d6d..24cdaa7 100644
 --- a/test/bumblebee/text/qwen3_test.exs
 +++ b/test/bumblebee/text/qwen3_test.exs
-@@ -75,4 +75,97 @@ defmodule Bumblebee.Text.Qwen3Test do
+@@ -53,6 +53,28 @@ defmodule Bumblebee.Text.Qwen3Test do
+     )
+   end
+ 
++  test ":for_causal_language_modeling with zero experts, which uses dense blocks" do
++    repo = {:hf, "bumblebee-testing/tiny-random-Qwen3ForCausalLM"}
++
++    assert {:ok, spec} = Bumblebee.load_spec(repo)
++    spec = Bumblebee.configure(spec, num_experts: 0)
++    assert {:ok, %{model: model, params: params}} = Bumblebee.load_model(repo, spec: spec)
++
++    inputs = %{
++      "input_ids" => Nx.tensor([[10, 20, 30, 40, 50, 60, 70, 80, 0, 0]]),
++      "attention_mask" => Nx.tensor([[1, 1, 1, 1, 1, 1, 1, 1, 0, 0]])
++    }
++
++    outputs = Axon.predict(model, params, inputs)
++
++    assert_all_close(
++      outputs.logits[[.., 1..3, 1..3]],
++      Nx.tensor([
++        [[0.1457, 0.0313, -0.0651], [0.1718, -0.0265, -0.0186], [0.2281, -0.0124, -0.0147]]
++      ])
++    )
++  end
++
+   test ":for_sequence_classification" do
+     assert {:ok, %{model: model, params: params, spec: spec}} =
+              Bumblebee.load_model(
+@@ -75,4 +97,130 @@ defmodule Bumblebee.Text.Qwen3Test do
        Nx.tensor([[-0.1487, -0.0071]])
      )
    end
@@ -710,6 +741,39 @@ index 5134d6d..6540ee8 100644
 +      assert_all_close(
 +        outputs.logits[[.., .., 1..3]],
 +        Nx.tensor([[[1.4816, -1.7118, -0.8247], [0.0042, 0.8791, -4.3974]]])
++      )
++    end
++
++    test ":for_causal_language_modeling without normalizing the chosen experts' probabilities" do
++      repo = {:hf, "optimum-internal-testing/tiny-random-qwen3_moe"}
++
++      # Qwen3MoeConfig does not normalize by default, and so does the spec
++      assert %Bumblebee.Text.Qwen3{normalize_top_k: false} =
++               Bumblebee.configure(Bumblebee.Text.Qwen3)
++
++      assert {:ok, spec} = Bumblebee.load_spec(repo)
++      spec = Bumblebee.configure(spec, normalize_top_k: false)
++      assert {:ok, %{model: model, params: params}} = Bumblebee.load_model(repo, spec: spec)
++
++      inputs = %{
++        "input_ids" => Nx.tensor([[10, 20, 30, 40, 50, 60, 70, 80, 0, 0]]),
++        "attention_mask" => Nx.tensor([[1, 1, 1, 1, 1, 1, 1, 1, 0, 0]])
++      }
++
++      outputs = Axon.predict(model, params, inputs)
++
++      assert_all_close(
++        outputs.logits[[.., 1..3, 1..3]],
++        Nx.tensor([
++          [[0.1764, 0.9506, -4.3386], [-0.7170, 0.9216, -4.1042], [5.3185, -0.1513, 1.6662]]
++        ])
++      )
++
++      outputs = Axon.predict(model, params, %{"input_ids" => Nx.tensor([[10, 20]])})
++
++      assert_all_close(
++        outputs.logits[[.., .., 1..3]],
++        Nx.tensor([[[2.3092, -1.7507, -0.8362], [0.1764, 0.9506, -4.3386]]])
 +      )
 +    end
 +
