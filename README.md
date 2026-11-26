@@ -1,6 +1,6 @@
 # Kimi Linear in Bumblebee: evidence
 
-This repository backs the change that lets Elixir run Kimi Linear with Bumblebee, on branch `kimi-linear` ([`bumblebee.patch`](bumblebee/bumblebee.patch)), which stacks on the `llama4` branch for its mixture of experts layer.
+This repository backs the change that lets Elixir run Kimi Linear with Bumblebee, on branch `kimi-linear` ([`bumblebee.patch`](bumblebee/bumblebee.patch)), which stacks on the `llama4` branch for its mixture of experts layer and merges the `qwen3-5` branch for the shared linear attention; the patch holds only the Kimi Linear commits after that merge.
 Kimi Linear interleaves two kinds of attention, and Bumblebee implements both:
 
 - Kimi Delta Attention, in three of every four blocks: the gated delta rule of Qwen3.5's linear attention, with a decay per key channel instead of per head, short convolutions over queries, keys and values, and an output norm gated by a sigmoid.

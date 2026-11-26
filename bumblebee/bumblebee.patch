@@ -1,5 +1,5 @@
 diff --git a/lib/bumblebee.ex b/lib/bumblebee.ex
-index b63fd59..e340b3a 100644
+index e9e5c93..ba8c37c 100644
 --- a/lib/bumblebee.ex
 +++ b/lib/bumblebee.ex
 @@ -165,6 +165,7 @@ defmodule Bumblebee do
@@ -12,10 +12,10 @@ index b63fd59..e340b3a 100644
      "LayoutLMForSequenceClassification" =>
 diff --git a/lib/bumblebee/text/kimi_linear.ex b/lib/bumblebee/text/kimi_linear.ex
 new file mode 100644
-index 0000000..ac63d4b
+index 0000000..acefd58
 --- /dev/null
 +++ b/lib/bumblebee/text/kimi_linear.ex
-@@ -0,0 +1,1128 @@
+@@ -0,0 +1,918 @@
 +defmodule Bumblebee.Text.KimiLinear do
 +  alias Bumblebee.Shared
 +
@@ -205,6 +205,7 @@ index 0000000..ac63d4b
 +  import Bumblebee.Utils.Model, only: [join: 2]
 +
 +  alias Bumblebee.Layers
++  alias Bumblebee.Layers.LinearAttention
 +
 +  @impl true
 +  def architectures(), do: [:base, :for_causal_language_modeling]
@@ -555,7 +556,14 @@ index 0000000..ac63d4b
 +        axis: -1
 +      )
 +
-+    {query_key_value, cache} = causal_conv(query_key_value, cache, spec, name: join(name, "conv"))
++    {query_key_value, cache} =
++      LinearAttention.causal_conv(query_key_value, cache,
++        channels: linear_attention_conv_size(spec),
++        kernel_size: spec.linear_attention_conv_kernel_size,
++        kernel_initializer: kernel_initializer(spec),
++        name: join(name, "conv")
++      )
++
 +    query_key_value = Axon.activation(query_key_value, spec.activation)
 +
 +    split_heads = fn index ->
@@ -610,67 +618,6 @@ index 0000000..ac63d4b
 +    |> then(&{&1, cache})
 +  end
 +
-+  defp causal_conv(input, cache, spec, opts) do
-+    kernel_size = spec.linear_attention_conv_kernel_size
-+
-+    kernel =
-+      Axon.param("kernel", {linear_attention_conv_size(spec), kernel_size},
-+        initializer: kernel_initializer(spec)
-+      )
-+
-+    Axon.layer(&causal_conv_impl/4, [input, kernel, Axon.optional(cache)],
-+      name: opts[:name],
-+      op_name: :causal_conv
-+    )
-+    |> Layers.unwrap_tuple(2)
-+  end
-+
-+  deftransformp causal_conv_impl(input, kernel, cache, _opts \\ []) do
-+    {channels, kernel_size} = Nx.shape(kernel)
-+    {batch_size, sequence_length, ^channels} = Nx.shape(input)
-+
-+    # The convolution sees the inputs of the preceding tokens, which are
-+    # kept in the cache, or zeros at the start of the sequence
-+    window =
-+      case cache do
-+        %Axon.None{} ->
-+          Nx.broadcast(
-+            Nx.tensor(0, type: Nx.type(input)),
-+            {batch_size, kernel_size - 1, channels}
-+          )
-+
-+        %{conv_state: conv_state} ->
-+          Nx.as_type(conv_state, Nx.type(input))
-+      end
-+
-+    full_input = Nx.concatenate([window, input], axis: 1)
-+
-+    output =
-+      0..(kernel_size - 1)
-+      |> Enum.map(fn offset ->
-+        full_input
-+        |> Nx.slice_along_axis(offset, sequence_length, axis: 1)
-+        |> Nx.multiply(kernel[[.., offset]])
-+      end)
-+      |> Enum.reduce(&Nx.add/2)
-+
-+    cache =
-+      case cache do
-+        %Axon.None{} ->
-+          cache
-+
-+        %{conv_state: conv_state} = cache ->
-+          window = Nx.slice_along_axis(full_input, sequence_length, kernel_size - 1, axis: 1)
-+          %{cache | conv_state: Nx.as_type(window, Nx.type(conv_state))}
-+      end
-+
-+    {output, cache}
-+  end
-+
-+  # Each chunk holds pairwise decays for every key channel, so chunks are
-+  # shorter than in the gated delta rule with one decay per head
-+  @chunk_size 16
-+
 +  deftransformp kimi_delta_rule_impl(
 +                  query,
 +                  key,
@@ -700,16 +647,16 @@ index 0000000..ac63d4b
 +          Nx.as_type(recurrent_state, :f32)
 +      end
 +
-+    {query, key} = normalize_query_key(Nx.as_type(query, :f32), Nx.as_type(key, :f32))
-+    value = Nx.as_type(value, :f32)
-+
 +    {output, state} =
-+      if sequence_length == 1 do
-+        delta_rule_single(query, key, value, beta, decay, state)
-+      else
-+        padding = rem(@chunk_size - rem(sequence_length, @chunk_size), @chunk_size)
-+        delta_rule_chunked(query, key, value, beta, decay, state, padding: padding)
-+      end
++      LinearAttention.delta_rule(
++        Nx.as_type(query, :f32),
++        Nx.as_type(key, :f32),
++        Nx.as_type(value, :f32),
++        beta,
++        decay,
++        state,
++        chunk_size: 16
++      )
 +
 +    cache =
 +      case cache do
@@ -732,163 +679,6 @@ index 0000000..ac63d4b
 +    softplus = Nx.reshape(softplus, {batch_size, sequence_length, num_heads, :auto})
 +    rate = a_log |> Nx.as_type(:f32) |> Nx.exp() |> Nx.reshape({1, 1, num_heads, 1})
 +    Nx.reshape(-rate * softplus, {batch_size, sequence_length, :auto})
-+  end
-+
-+  defnp normalize_query_key(query, key) do
-+    {l2_normalize(query) / Nx.sqrt(Nx.axis_size(query, -1)), l2_normalize(key)}
-+  end
-+
-+  defnp l2_normalize(x) do
-+    x * Nx.rsqrt(Nx.sum(x * x, axes: [-1], keep_axes: true) + 1.0e-6)
-+  end
-+
-+  defnp delta_rule_single(query, key, value, beta, decay, state) do
-+    take = &Nx.squeeze(&1, axes: [1])
-+    {q, k, v, b, d} = {take.(query), take.(key), take.(value), take.(beta), take.(decay)}
-+
-+    state = state * Nx.new_axis(Nx.exp(d), -1)
-+    memory = Nx.sum(state * Nx.new_axis(k, -1), axes: [2])
-+    delta = (v - memory) * Nx.new_axis(b, -1)
-+    state = state + Nx.new_axis(k, -1) * Nx.new_axis(delta, 2)
-+    output = Nx.sum(state * Nx.new_axis(q, -1), axes: [2])
-+
-+    {Nx.new_axis(output, 1), state}
-+  end
-+
-+  # Within a chunk, the delta rule updates are condensed into matrix
-+  # products by solving a unit lower triangular system, so the loop runs
-+  # once per chunk instead of once per token
-+  defnp delta_rule_chunked(query, key, value, beta, decay, state, opts \\ []) do
-+    opts = keyword!(opts, [:padding])
-+    {batch_size, sequence_length, num_heads, value_head_size} = Nx.shape(value)
-+
-+    query = to_chunks(query, opts[:padding])
-+    key = to_chunks(key, opts[:padding])
-+    value = to_chunks(value, opts[:padding])
-+    beta = to_chunks(beta, opts[:padding])
-+    decay = to_chunks(decay, opts[:padding])
-+
-+    key_beta = key * Nx.new_axis(beta, -1)
-+    value_beta = value * Nx.new_axis(beta, -1)
-+
-+    # The decay of each key channel accumulated from the start of the
-+    # chunk to each position, and between each pair of positions
-+    cumulative_decay = Nx.cumulative_sum(decay, axis: 3)
-+
-+    lower =
-+      Nx.greater_equal(
-+        Nx.iota({@chunk_size, @chunk_size, 1}, axis: 0),
-+        Nx.iota({@chunk_size, @chunk_size, 1}, axis: 1)
-+      )
-+
-+    pairwise = Nx.new_axis(cumulative_decay, 4) - Nx.new_axis(cumulative_decay, 3)
-+
-+    pairwise_decay =
-+      Nx.exp(Nx.select(Nx.broadcast(lower, pairwise), pairwise, Nx.Constants.neg_infinity(:f32)))
-+
-+    system = Nx.sum(Nx.new_axis(key_beta, 4) * Nx.new_axis(key, 3) * pairwise_decay, axes: [-1])
-+    intra_chunk = Nx.sum(Nx.new_axis(query, 4) * Nx.new_axis(key, 3) * pairwise_decay, axes: [-1])
-+
-+    strictly_lower =
-+      Nx.greater(
-+        Nx.iota({@chunk_size, @chunk_size}, axis: 0),
-+        Nx.iota({@chunk_size, @chunk_size}, axis: 1)
-+      )
-+
-+    unit_lower =
-+      Nx.select(Nx.broadcast(strictly_lower, system), system, 0.0) + Nx.eye(@chunk_size)
-+
-+    decayed_key_beta = key_beta * Nx.exp(cumulative_decay)
-+
-+    solution =
-+      Nx.LinAlg.triangular_solve(
-+        unit_lower,
-+        Nx.concatenate([value_beta, decayed_key_beta], axis: 4),
-+        lower: true
-+      )
-+
-+    new_values = Nx.slice_along_axis(solution, 0, value_head_size, axis: 4)
-+
-+    key_cumulative_decay =
-+      Nx.slice_along_axis(solution, value_head_size, Nx.axis_size(decayed_key_beta, 4), axis: 4)
-+
-+    last_decay = Nx.slice_along_axis(cumulative_decay, @chunk_size - 1, 1, axis: 3)
-+    query = query * Nx.exp(cumulative_decay)
-+    key = key * Nx.exp(last_decay - cumulative_decay)
-+    # Each key channel decays its row of the state
-+    chunk_decay = last_decay |> Nx.exp() |> Nx.transpose(axes: [0, 1, 2, 4, 3])
-+
-+    {output, state} =
-+      chunk_scan(query, key, new_values, key_cumulative_decay, intra_chunk, chunk_decay, state)
-+
-+    output =
-+      output
-+      |> Nx.reshape({batch_size, num_heads, :auto, value_head_size})
-+      |> Nx.slice_along_axis(0, sequence_length, axis: 2)
-+      |> Nx.transpose(axes: [0, 2, 1, 3])
-+
-+    {output, state}
-+  end
-+
-+  # Moves the heads before the sequence, pads the sequence to whole chunks
-+  # and splits it into chunks
-+  deftransformp to_chunks(tensor, padding) do
-+    [batch_size, sequence_length, num_heads | rest] = tensor |> Nx.shape() |> Tuple.to_list()
-+    axes = [0, 2, 1 | Enum.drop(Nx.axes(tensor), 3)]
-+
-+    padding_config = [
-+      {0, 0, 0},
-+      {0, 0, 0},
-+      {0, padding, 0} | Enum.map(rest, fn _ -> {0, 0, 0} end)
-+    ]
-+
-+    num_chunks = div(sequence_length + padding, @chunk_size)
-+
-+    tensor
-+    |> Nx.transpose(axes: axes)
-+    |> Nx.pad(0.0, padding_config)
-+    |> Nx.reshape(List.to_tuple([batch_size, num_heads, num_chunks, @chunk_size | rest]))
-+  end
-+
-+  # The number of chunks is known when building the graph, so the loop is
-+  # unrolled into a single graph
-+  deftransformp chunk_scan(
-+                  query,
-+                  key,
-+                  new_values,
-+                  key_cumulative_decay,
-+                  intra_chunk,
-+                  chunk_decay,
-+                  state
-+                ) do
-+    num_chunks = Nx.axis_size(new_values, 2)
-+
-+    {outputs, state} =
-+      Enum.map_reduce(0..(num_chunks - 1), state, fn index, state ->
-+        take = &(&1 |> Nx.slice_along_axis(index, 1, axis: 2) |> Nx.squeeze(axes: [2]))
-+
-+        delta =
-+          Nx.subtract(
-+            take.(new_values),
-+            Nx.dot(take.(key_cumulative_decay), [3], [0, 1], state, [2], [0, 1])
-+          )
-+
-+        output =
-+          Nx.add(
-+            Nx.dot(take.(query), [3], [0, 1], state, [2], [0, 1]),
-+            Nx.dot(take.(intra_chunk), [3], [0, 1], delta, [2], [0, 1])
-+          )
-+
-+        state =
-+          Nx.add(
-+            Nx.multiply(state, take.(chunk_decay)),
-+            Nx.dot(take.(key), [2], [0, 1], delta, [2], [0, 1])
-+          )
-+
-+        {output, state}
-+      end)
-+
-+    {Nx.stack(outputs, axis: 2), state}
 +  end
 +
 +  defnp gated_rms_norm_impl(input, gate, weight, opts \\ []) do
@@ -1145,7 +935,7 @@ index 0000000..ac63d4b
 +  end
 +end
 diff --git a/mix.exs b/mix.exs
-index 8d85b21..89242ad 100644
+index 3926db0..b800d3f 100644
 --- a/mix.exs
 +++ b/mix.exs
 @@ -98,6 +98,7 @@ defmodule Bumblebee.MixProject do

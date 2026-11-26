@@ -1,5 +1,5 @@
 diff --git a/lib/bumblebee.ex b/lib/bumblebee.ex
-index e340b3a..447a04d 100644
+index ba8c37c..5ed5dca 100644
 --- a/lib/bumblebee.ex
 +++ b/lib/bumblebee.ex
 @@ -68,6 +68,7 @@ defmodule Bumblebee do
@@ -10,7 +10,7 @@ index e340b3a..447a04d 100644
    @tokenizer_special_tokens_filename "special_tokens_map.json"
    @generation_filename "generation_config.json"
    @scheduler_filename "scheduler_config.json"
-@@ -299,6 +300,7 @@ defmodule Bumblebee do
+@@ -302,6 +303,7 @@ defmodule Bumblebee do
      "gpt_bigcode" => :gpt2,
      "layoutlm" => :layout_lm,
      "llama" => :llama,
@@ -18,7 +18,7 @@ index e340b3a..447a04d 100644
      "llama4" => :llama,
      "llama4_text" => :llama,
      "mistral" => :llama,
-@@ -1018,53 +1020,15 @@ defmodule Bumblebee do
+@@ -1023,53 +1025,15 @@ defmodule Bumblebee do
      case get_repo_files(repository) do
        {:ok, %{@tokenizer_filename => etag} = repo_files} ->
          with {:ok, path} <- download(repository, @tokenizer_filename, etag) do
@@ -80,7 +80,7 @@ index e340b3a..447a04d 100644
          end
  
        {:ok, %{@tokenizer_config_filename => _}} ->
-@@ -1081,6 +1045,84 @@ defmodule Bumblebee do
+@@ -1086,6 +1050,84 @@ defmodule Bumblebee do
      end
    end
  
