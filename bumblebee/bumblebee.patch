@@ -1,15 +1,15 @@
 diff --git a/lib/bumblebee.ex b/lib/bumblebee.ex
-index e554e22..ea74ab0 100644
+index b63fd59..e340b3a 100644
 --- a/lib/bumblebee.ex
 +++ b/lib/bumblebee.ex
-@@ -212,6 +212,7 @@ defmodule Bumblebee do
-     "Qwen3ForCausalLM" => {Bumblebee.Text.Qwen3, :for_causal_language_modeling},
-     "Qwen3MoeModel" => {Bumblebee.Text.Qwen3, :base},
-     "Qwen3MoeForCausalLM" => {Bumblebee.Text.Qwen3, :for_causal_language_modeling},
+@@ -165,6 +165,7 @@ defmodule Bumblebee do
+     "GPTNeoXForCausalLM" => {Bumblebee.Text.GptNeoX, :for_causal_language_modeling},
+     "GPTNeoXForSequenceClassification" => {Bumblebee.Text.GptNeoX, :for_sequence_classification},
+     "GPTNeoXForTokenClassification" => {Bumblebee.Text.GptNeoX, :for_token_classification},
 +    "KimiLinearForCausalLM" => {Bumblebee.Text.KimiLinear, :for_causal_language_modeling},
-     "Llama4ForCausalLM" => {Bumblebee.Text.Llama4, :for_causal_language_modeling},
-     "Llama4ForConditionalGeneration" => {Bumblebee.Text.Llama4, :for_causal_language_modeling},
-     "Llama4TextModel" => {Bumblebee.Text.Llama4, :base},
+     "LayoutLMForMaskedLM" => {Bumblebee.Multimodal.LayoutLm, :for_masked_language_modeling},
+     "LayoutLMForQuestionAnswering" => {Bumblebee.Multimodal.LayoutLm, :for_question_answering},
+     "LayoutLMForSequenceClassification" =>
 diff --git a/lib/bumblebee/text/kimi_linear.ex b/lib/bumblebee/text/kimi_linear.ex
 new file mode 100644
 index 0000000..ac63d4b
@@ -1144,6 +1144,18 @@ index 0000000..ac63d4b
 +    end
 +  end
 +end
+diff --git a/mix.exs b/mix.exs
+index 8d85b21..89242ad 100644
+--- a/mix.exs
++++ b/mix.exs
+@@ -98,6 +98,7 @@ defmodule Bumblebee.MixProject do
+           Bumblebee.Text.Gpt2,
+           Bumblebee.Text.GptBigCode,
+           Bumblebee.Text.GptNeoX,
++          Bumblebee.Text.KimiLinear,
+           Bumblebee.Text.Llama,
+           Bumblebee.Text.Llama4,
+           Bumblebee.Text.M2m100,
 diff --git a/test/bumblebee/text/kimi_linear_test.exs b/test/bumblebee/text/kimi_linear_test.exs
 new file mode 100644
 index 0000000..4d05104

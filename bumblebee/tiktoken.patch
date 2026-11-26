@@ -1,5 +1,5 @@
 diff --git a/lib/bumblebee.ex b/lib/bumblebee.ex
-index ea74ab0..6bc2821 100644
+index e340b3a..2482bc4 100644
 --- a/lib/bumblebee.ex
 +++ b/lib/bumblebee.ex
 @@ -68,6 +68,7 @@ defmodule Bumblebee do
@@ -80,7 +80,7 @@ index ea74ab0..6bc2821 100644
          end
  
        {:ok, %{@tokenizer_config_filename => _}} ->
-@@ -1081,6 +1045,79 @@ defmodule Bumblebee do
+@@ -1081,6 +1045,83 @@ defmodule Bumblebee do
      end
    end
  
@@ -144,7 +144,11 @@ index ea74ab0..6bc2821 100644
 +    unless File.exists?(path) do
 +      json = Bumblebee.Text.Tiktoken.tokenizer_json(tiktoken_path, type, tokenizer_config)
 +      File.mkdir_p!(Path.dirname(path))
-+      File.write!(path, Jason.encode!(json))
++      # Renaming is atomic, so concurrent loads never read a partial file
++      unique = System.unique_integer([:positive])
++      tmp_path = "#{path}.#{unique}.tmp"
++      File.write!(tmp_path, Jason.encode!(json))
++      File.rename!(tmp_path, path)
 +    end
 +
 +    path
@@ -181,10 +185,10 @@ index 4c8972b..f67757c 100644
          eos: "</s>",
 diff --git a/lib/bumblebee/text/tiktoken.ex b/lib/bumblebee/text/tiktoken.ex
 new file mode 100644
-index 0000000..1d6f805
+index 0000000..10d4390
 --- /dev/null
 +++ b/lib/bumblebee/text/tiktoken.ex
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,171 @@
 +defmodule Bumblebee.Text.Tiktoken do
 +  @moduledoc false
 +
@@ -251,7 +255,11 @@ index 0000000..1d6f805
 +      if configured == %{} do
 +        []
 +      else
-+        for id <- map_size(ranks)..Enum.max(Map.keys(configured)) do
++        max_id = Enum.max(Map.keys(configured))
++        reserved_ids = Enum.to_list(map_size(ranks)..max_id//1)
++        ids = Enum.sort(Enum.uniq(Map.keys(configured) ++ reserved_ids))
++
++        for id <- ids do
 +          token = Map.get(configured, id, %{"content" => "<|reserved_token_#{id}|>"})
 +
 +          %{
@@ -453,3 +461,48 @@ index 08c18ea..336cd97 100644
    test ":layout_lm" do
      assert {:ok, tokenizer} = Bumblebee.load_tokenizer({:hf, "microsoft/layoutlm-base-uncased"})
  
+diff --git a/test/bumblebee/text/tiktoken_test.exs b/test/bumblebee/text/tiktoken_test.exs
+new file mode 100644
+index 0000000..252dae8
+--- /dev/null
++++ b/test/bumblebee/text/tiktoken_test.exs
+@@ -0,0 +1,39 @@
++defmodule Bumblebee.Text.TiktokenTest do
++  use ExUnit.Case, async: true
++
++  alias Bumblebee.Text.Tiktoken
++
++  @moduletag :tmp_dir
++
++  setup %{tmp_dir: tmp_dir} do
++    path = Path.join(tmp_dir, "tiktoken.model")
++
++    lines =
++      for {token, rank} <- [{"a", 0}, {"b", 1}, {"ab", 2}],
++          do: "#{Base.encode64(token)} #{rank}\n"
++
++    File.write!(path, lines)
++    %{path: path}
++  end
++
++  test "fills the ids between the vocabulary and the configured tokens with reserved tokens",
++       %{path: path} do
++    config = %{"added_tokens_decoder" => %{"5" => %{"content" => "<|end|>"}}}
++
++    json = Tiktoken.tokenizer_json(path, :kimi, config)
++
++    assert Enum.map(json["added_tokens"], &{&1["id"], &1["content"]}) == [
++             {3, "<|reserved_token_3|>"},
++             {4, "<|reserved_token_4|>"},
++             {5, "<|end|>"}
++           ]
++  end
++
++  test "keeps configured tokens inside the vocabulary without reserved tokens", %{path: path} do
++    config = %{"added_tokens_decoder" => %{"1" => %{"content" => "b"}}}
++
++    json = Tiktoken.tokenizer_json(path, :kimi, config)
++
++    assert Enum.map(json["added_tokens"], &{&1["id"], &1["content"]}) == [{1, "b"}]
++  end
++end
