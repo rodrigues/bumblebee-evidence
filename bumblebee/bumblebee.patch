@@ -1,7 +1,7 @@
 From 98fd8de5c04b4afc16ce4a8b8ca7b44cacdb3ce1 Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Wed, 25 Nov 2026 01:46:50 +0000
-Subject: [PATCH 1/6] Add Llama 4
+Subject: [PATCH 1/7] Add Llama 4
 
 ---
  lib/bumblebee.ex                    |   5 +
@@ -978,7 +978,7 @@ index 0000000..20d8330
 From 2f6b14287b74d958a478ff27dcee48d2092388c1 Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Wed, 25 Nov 2026 11:47:17 +0000
-Subject: [PATCH 2/6] Llama 4: Attend to the whole sequence when the chunk size
+Subject: [PATCH 2/7] Llama 4: Attend to the whole sequence when the chunk size
  is null
 
 ---
@@ -1057,7 +1057,7 @@ index 20d8330..f921597 100644
 From 19873420154c992b2d337e0922f4c48a7af639df Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Wed, 25 Nov 2026 14:36:33 +0000
-Subject: [PATCH 3/6] Llama 4: Let the loader infer the multimodal prefix
+Subject: [PATCH 3/7] Llama 4: Let the loader infer the multimodal prefix
 
 ---
  lib/bumblebee/text/llama4.ex | 20 ++++----------------
@@ -1111,7 +1111,7 @@ index 3251c69..661bc5e 100644
 From 69e0b14272a7c8f4f2d4e4ffde4cd06c7d4943ca Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Wed, 25 Nov 2026 15:23:36 +0000
-Subject: [PATCH 4/6] Llama 4: Add the embedder and write the layer
+Subject: [PATCH 4/7] Llama 4: Add the embedder and write the layer
  implementations in defn, as other models do
 
 ---
@@ -1231,7 +1231,7 @@ index 661bc5e..4ee9e51 100644
 From ef8558feb62ca87dca00b20e14f6e042adaea46d Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Thu, 26 Nov 2026 13:26:30 +0000
-Subject: [PATCH 5/6] Llama 4: Compute the query temperature from the integer
+Subject: [PATCH 5/7] Llama 4: Compute the query temperature from the integer
  positions
 
 ---
@@ -1305,7 +1305,7 @@ index f921597..4c1cb0c 100644
 From 5e52fba0ba0aff64d71af7aa2b8188e3c5f86319 Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Thu, 26 Nov 2026 13:26:54 +0000
-Subject: [PATCH 6/6] Llama 4: List the module in the docs and its
+Subject: [PATCH 6/7] Llama 4: List the module in the docs and its
  architectures beside Llama's
 
 ---
@@ -1349,6 +1349,38 @@ index 44e1f9c..8d85b21 100644
            Bumblebee.Text.M2m100,
            Bumblebee.Text.Mbart,
            Bumblebee.Text.Mistral,
+-- 
+2.56.1
+
+
+From ec91c3b5e99f5a7d94755e2d10e700b0403cf5e2 Mon Sep 17 00:00:00 2001
+From: Victor Rodrigues <vitumail@gmail.com>
+Date: Thu, 26 Nov 2026 13:33:37 +0000
+Subject: [PATCH 7/7] Llama 4: State only what the float16 temperature test
+ relies on
+
+---
+ test/bumblebee/text/llama4_test.exs | 7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/test/bumblebee/text/llama4_test.exs b/test/bumblebee/text/llama4_test.exs
+index 4c1cb0c..bda9c06 100644
+--- a/test/bumblebee/text/llama4_test.exs
++++ b/test/bumblebee/text/llama4_test.exs
+@@ -118,10 +118,9 @@ defmodule Bumblebee.Text.Llama4Test do
+     repo = {:hf, "bumblebee-testing/tiny-random-Llama4ForCausalLM"}
+     offset = 65_520
+ 
+-    # EXLA fuses the cast of the positions with the division and computes
+-    # it in float32, so this runs on a backend that rounds every step. The
+-    # temperature depends only on the cache offset, so a short cache keeps
+-    # it fast
++    # The positions do not overflow on EXLA, so this runs on a backend
++    # that rounds every step to float16. The temperature depends only on
++    # the cache offset, so a short cache keeps it fast
+     logits = fn type ->
+       Nx.with_default_backend(Nx.BinaryBackend, fn ->
+         assert {:ok, %{model: model, params: params, spec: spec}} =
 -- 
 2.56.1
 
