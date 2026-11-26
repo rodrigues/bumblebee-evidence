@@ -1,0 +1,9 @@
+# EXLA on the CPU, under the shared lock, 2026-11-26
+b3a78dd, before the move
+  64 tokens: compile 141 ms, run 0.7 ms (best of 5), logits sum 349.8755
+  1024 tokens: compile 307 ms, run 8.7 ms (best of 5), logits sum 10235.8574
+  4096 tokens: compile 1390 ms, run 46.8 ms (best of 5), logits sum 42893.0078
+546712a, after the move
+  64 tokens: compile 155 ms, run 0.7 ms (best of 5), logits sum 349.8755
+  1024 tokens: compile 308 ms, run 8.6 ms (best of 5), logits sum 10235.8574
+  4096 tokens: compile 1369 ms, run 47.3 ms (best of 5), logits sum 42893.0078

@@ -14,6 +14,10 @@ All runs were on macOS (Apple M5 Pro, 64 GiB), with Elixir 1.20.5 and OTP 29.1.2
 [`tiny_mlx.py`](bumblebee/tiny_mlx.py) converts the multimodal one to MLX's layout with mlx-lm 0.32.2, unquantized, and records mlx-lm's outputs in [`tiny-mlx-reference.json`](bumblebee/outputs/tiny-mlx-reference.json).
 Loading MLX's layout is not part of the `qwen3-5` branch: the test for it is on `qwen3-8-mlx`, with the rest of the MLX support.
 
+The branch's last commit moves the causal convolution and the delta rule to a shared module, `Bumblebee.Layers.LinearAttention`, which Kimi Linear also uses.
+[`timing.exs`](bumblebee/timing.exs) times the tiny causal checkpoint on EXLA before and after that commit ([`timing.txt`](bumblebee/outputs/timing.txt)): the logits sums are identical, and compile and run times are within run-to-run variation.
+The shared module's branch for a decay per key channel, which Kimi Linear needs, is not exercised by Qwen3.5 or its tests.
+
 | Checkpoint | Covers |
 |---|---|
 | [tiny-random-Qwen3_5TextModel](bumblebee/checkpoints/tiny-random-Qwen3_5TextModel) | the `:base` architecture, from a checkpoint whose names have no prefix |
@@ -81,6 +85,7 @@ uv run reference.py
 uv run tiny_mlx.py
 uv run reference_long.py
 BUMBLEBEE_PATH=path/to/bumblebee elixir bumblebee.exs
+BUMBLEBEE_PATH=path/to/bumblebee elixir timing.exs
 BUMBLEBEE_PATH=path/to/bumblebee ./tests.sh
 uv run reference_2b.py
 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_2b.exs
