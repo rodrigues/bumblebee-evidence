@@ -1,7 +1,7 @@
 From 98fd8de5c04b4afc16ce4a8b8ca7b44cacdb3ce1 Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Wed, 25 Nov 2026 01:46:50 +0000
-Subject: [PATCH 1/4] Add Llama 4
+Subject: [PATCH 1/6] Add Llama 4
 
 ---
  lib/bumblebee.ex                    |   5 +
@@ -978,7 +978,7 @@ index 0000000..20d8330
 From 2f6b14287b74d958a478ff27dcee48d2092388c1 Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Wed, 25 Nov 2026 11:47:17 +0000
-Subject: [PATCH 2/4] Llama 4: Attend to the whole sequence when the chunk size
+Subject: [PATCH 2/6] Llama 4: Attend to the whole sequence when the chunk size
  is null
 
 ---
@@ -1057,7 +1057,7 @@ index 20d8330..f921597 100644
 From 19873420154c992b2d337e0922f4c48a7af639df Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Wed, 25 Nov 2026 14:36:33 +0000
-Subject: [PATCH 3/4] Llama 4: Let the loader infer the multimodal prefix
+Subject: [PATCH 3/6] Llama 4: Let the loader infer the multimodal prefix
 
 ---
  lib/bumblebee/text/llama4.ex | 20 ++++----------------
@@ -1111,7 +1111,7 @@ index 3251c69..661bc5e 100644
 From 69e0b14272a7c8f4f2d4e4ffde4cd06c7d4943ca Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Wed, 25 Nov 2026 15:23:36 +0000
-Subject: [PATCH 4/4] Llama 4: Add the embedder and write the layer
+Subject: [PATCH 4/6] Llama 4: Add the embedder and write the layer
  implementations in defn, as other models do
 
 ---
@@ -1224,6 +1224,131 @@ index 661bc5e..4ee9e51 100644
    defp experts(hidden_state, spec, opts) do
      name = opts[:name]
  
+-- 
+2.56.1
+
+
+From ef8558feb62ca87dca00b20e14f6e042adaea46d Mon Sep 17 00:00:00 2001
+From: Victor Rodrigues <vitumail@gmail.com>
+Date: Thu, 26 Nov 2026 13:26:30 +0000
+Subject: [PATCH 5/6] Llama 4: Compute the query temperature from the integer
+ positions
+
+---
+ lib/bumblebee/text/llama4.ex        |  4 ++--
+ test/bumblebee/text/llama4_test.exs | 31 +++++++++++++++++++++++++++++
+ 2 files changed, 33 insertions(+), 2 deletions(-)
+
+diff --git a/lib/bumblebee/text/llama4.ex b/lib/bumblebee/text/llama4.ex
+index 4ee9e51..45c6296 100644
+--- a/lib/bumblebee/text/llama4.ex
++++ b/lib/bumblebee/text/llama4.ex
+@@ -494,10 +494,10 @@ defmodule Bumblebee.Text.Llama4 do
+     opts = keyword!(opts, [:scale, :positions, mode: :inference])
+ 
+     positions = Nx.iota({Nx.axis_size(query, 1)}) + ensure_offset(offset)
+-    steps = Nx.floor(Nx.as_type(positions + 1, Nx.type(query)) / opts[:positions])
++    steps = Nx.quotient(positions + 1, opts[:positions])
+     scale = Nx.log1p(steps) * opts[:scale] + 1
+ 
+-    query * Nx.reshape(scale, {1, :auto, 1, 1})
++    query * Nx.as_type(Nx.reshape(scale, {1, :auto, 1, 1}), Nx.type(query))
+   end
+ 
+   defnp chunk_bias(query, key, offset, opts \\ []) do
+diff --git a/test/bumblebee/text/llama4_test.exs b/test/bumblebee/text/llama4_test.exs
+index f921597..4c1cb0c 100644
+--- a/test/bumblebee/text/llama4_test.exs
++++ b/test/bumblebee/text/llama4_test.exs
+@@ -114,6 +114,37 @@ defmodule Bumblebee.Text.Llama4Test do
+     )
+   end
+ 
++  test "query temperature past the largest float16 integer" do
++    repo = {:hf, "bumblebee-testing/tiny-random-Llama4ForCausalLM"}
++    offset = 65_520
++
++    # EXLA fuses the cast of the positions with the division and computes
++    # it in float32, so this runs on a backend that rounds every step. The
++    # temperature depends only on the cache offset, so a short cache keeps
++    # it fast
++    logits = fn type ->
++      Nx.with_default_backend(Nx.BinaryBackend, fn ->
++        assert {:ok, %{model: model, params: params, spec: spec}} =
++                 Bumblebee.load_model(repo, type: type)
++
++        input_ids = Nx.tensor([[10, 20, 30, 40]])
++        cache = Bumblebee.Text.Generation.init_cache(spec, 1, 8, %{})
++
++        inputs = %{
++          "input_ids" => input_ids,
++          "attention_mask" => Nx.broadcast(1, input_ids),
++          "position_ids" => Nx.iota({1, 4}) |> Nx.add(offset),
++          "cache" => %{cache | offset: Nx.tensor(offset)}
++        }
++
++        outputs = Axon.predict(model, params, inputs, compiler: Nx.Defn.Evaluator)
++        Nx.as_type(outputs.logits, :f32)
++      end)
++    end
++
++    assert_all_close(logits.(:f16), logits.(:f32), atol: 5.0e-2)
++  end
++
+   # The cache crosses two chunk boundaries and two query temperature steps
+   for {repo, expected} <- [
+         {"bumblebee-testing/tiny-random-Llama4ForCausalLM",
+-- 
+2.56.1
+
+
+From 5e52fba0ba0aff64d71af7aa2b8188e3c5f86319 Mon Sep 17 00:00:00 2001
+From: Victor Rodrigues <vitumail@gmail.com>
+Date: Thu, 26 Nov 2026 13:26:54 +0000
+Subject: [PATCH 6/6] Llama 4: List the module in the docs and its
+ architectures beside Llama's
+
+---
+ lib/bumblebee.ex | 6 +++---
+ mix.exs          | 1 +
+ 2 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/lib/bumblebee.ex b/lib/bumblebee.ex
+index e554e22..b63fd59 100644
+--- a/lib/bumblebee.ex
++++ b/lib/bumblebee.ex
+@@ -175,6 +175,9 @@ defmodule Bumblebee do
+     "LlamaModel" => {Bumblebee.Text.Llama, :base},
+     "LlamaForCausalLM" => {Bumblebee.Text.Llama, :for_causal_language_modeling},
+     "LlamaForSequenceClassification" => {Bumblebee.Text.Llama, :for_sequence_classification},
++    "Llama4ForCausalLM" => {Bumblebee.Text.Llama4, :for_causal_language_modeling},
++    "Llama4ForConditionalGeneration" => {Bumblebee.Text.Llama4, :for_causal_language_modeling},
++    "Llama4TextModel" => {Bumblebee.Text.Llama4, :base},
+     "MBartForCausalLM" => {Bumblebee.Text.Mbart, :for_causal_language_modeling},
+     "MBartForConditionalGeneration" => {Bumblebee.Text.Mbart, :for_conditional_generation},
+     "MBartForQuestionAnswering" => {Bumblebee.Text.Mbart, :for_question_answering},
+@@ -212,9 +215,6 @@ defmodule Bumblebee do
+     "Qwen3ForCausalLM" => {Bumblebee.Text.Qwen3, :for_causal_language_modeling},
+     "Qwen3MoeModel" => {Bumblebee.Text.Qwen3, :base},
+     "Qwen3MoeForCausalLM" => {Bumblebee.Text.Qwen3, :for_causal_language_modeling},
+-    "Llama4ForCausalLM" => {Bumblebee.Text.Llama4, :for_causal_language_modeling},
+-    "Llama4ForConditionalGeneration" => {Bumblebee.Text.Llama4, :for_causal_language_modeling},
+-    "Llama4TextModel" => {Bumblebee.Text.Llama4, :base},
+     "Qwen3ForSequenceClassification" => {Bumblebee.Text.Qwen3, :for_sequence_classification},
+     "ResNetForImageClassification" => {Bumblebee.Vision.ResNet, :for_image_classification},
+     "ResNetModel" => {Bumblebee.Vision.ResNet, :base},
+diff --git a/mix.exs b/mix.exs
+index 44e1f9c..8d85b21 100644
+--- a/mix.exs
++++ b/mix.exs
+@@ -99,6 +99,7 @@ defmodule Bumblebee.MixProject do
+           Bumblebee.Text.GptBigCode,
+           Bumblebee.Text.GptNeoX,
+           Bumblebee.Text.Llama,
++          Bumblebee.Text.Llama4,
+           Bumblebee.Text.M2m100,
+           Bumblebee.Text.Mbart,
+           Bumblebee.Text.Mistral,
 -- 
 2.56.1
 
