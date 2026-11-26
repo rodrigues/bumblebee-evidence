@@ -38,11 +38,29 @@ Where bfloat16 differs, transformers' float32 margin between its top two tokens 
 The tokenizer gives the same ids as transformers for both prompts.
 The checkpoint loads with no missing parameters and no shape mismatches, and the only unused tensors are the 129 of the vision tower and projector ([`params.exs`](bumblebee/params.exs), [`params.txt`](bumblebee/outputs/params.txt)).
 
+### Past position 16,384
+
+[`reference_3b_far.py`](bumblebee/reference_3b_far.py) feeds each prompt and its 30 generated tokens through transformers in float32 with positions starting at 20,000, where every query is scaled, and records the top token at the 30 generated positions ([`reference-3b-far.json`](bumblebee/outputs/reference-3b-far.json)).
+The scaling matters here: transformers' own top tokens differ from the ones it generated from position 0 at 4 of 30 positions for capital and 2 of 30 for haiku.
+[`bumblebee_3b_far.exs`](bumblebee/bumblebee_3b_far.exs) does the same in Bumblebee, in bfloat16 on EMLX ([`results-3b-far.md`](bumblebee/outputs/results-3b-far.md)):
+
+| Prompt | Same top token as transformers |
+|---|---|
+| capital | 30 of 30 |
+| haiku | 28 of 30 |
+
+Where they differ, transformers' margin between its top two tokens is at most 0.03.
+
+## Float16 on EMLX
+
+The tests check the float16 query scale on EXLA.
+[`emlx_f16.exs`](bumblebee/emlx_f16.exs) runs the same float16 comparison on EMLX, on the GPU, against transformers' float16 logits at positions 16,381 to 16,385 ([`emlx-f16.txt`](bumblebee/outputs/emlx-f16.txt)).
+With the fix the largest difference is 1.2e-4; without it, on commit e721d67, it is 1.46e-3, so the defect shows on EMLX as well.
+
 ## Not checked
 
 - The repositories without the -BF16 suffix, whose weights are FP8 with one scale per tensor.
 - The 8B and 14B sizes, and the Base and Reasoning variants, which use the same architecture.
-- Positions past 16,384 on the real checkpoint.
 - The vision tower.
 
 ## Reproduce
@@ -54,6 +72,9 @@ uv run reference.py
 BUMBLEBEE_PATH=path/to/bumblebee elixir bumblebee.exs
 uv run reference_3b.py
 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_3b.exs
+uv run reference_3b_far.py
+BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_3b_far.exs
+BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir emlx_f16.exs
 BUMBLEBEE_PATH=path/to/bumblebee elixir params.exs
 ```
 
