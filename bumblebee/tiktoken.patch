@@ -1,5 +1,5 @@
 diff --git a/lib/bumblebee.ex b/lib/bumblebee.ex
-index e340b3a..2482bc4 100644
+index e340b3a..447a04d 100644
 --- a/lib/bumblebee.ex
 +++ b/lib/bumblebee.ex
 @@ -68,6 +68,7 @@ defmodule Bumblebee do
@@ -80,7 +80,7 @@ index e340b3a..2482bc4 100644
          end
  
        {:ok, %{@tokenizer_config_filename => _}} ->
-@@ -1081,6 +1045,83 @@ defmodule Bumblebee do
+@@ -1081,6 +1045,84 @@ defmodule Bumblebee do
      end
    end
  
@@ -145,8 +145,9 @@ index e340b3a..2482bc4 100644
 +      json = Bumblebee.Text.Tiktoken.tokenizer_json(tiktoken_path, type, tokenizer_config)
 +      File.mkdir_p!(Path.dirname(path))
 +      # Renaming is atomic, so concurrent loads never read a partial file
++      pid = System.pid()
 +      unique = System.unique_integer([:positive])
-+      tmp_path = "#{path}.#{unique}.tmp"
++      tmp_path = "#{path}.#{pid}.#{unique}.tmp"
 +      File.write!(tmp_path, Jason.encode!(json))
 +      File.rename!(tmp_path, path)
 +    end
