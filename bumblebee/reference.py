@@ -27,7 +27,14 @@ with torch.no_grad():
     causal.config.rope_parameters["llama_4_scaling_beta"] = 0.0
     unscaled_far_logits = causal(input_ids=input_ids, attention_mask=attention_mask, position_ids=far).logits
 print("effect of the query scaling on the sharp logits:", (sharp_far_logits - unscaled_far_logits).abs().max().item())
+# In float16, integer positions above 2048 are not exact, so this checks that the scale comes from the integer positions.
+half = AutoModelForCausalLM.from_pretrained("hf-tiny-v2/tiny-random-Ministral3ForCausalLM", dtype=torch.float16).eval()
+with torch.no_grad():
+    for layer in half.model.layers:
+        layer.self_attn.q_proj.weight.mul_(30.0)
+    half_far_logits = half(input_ids=input_ids, attention_mask=attention_mask, position_ids=far).logits.float()
 reference["tiny-random-Ministral3ForCausalLM"] = {
+    "float16 sharp logits at positions 16381 to 16385": half_far_logits[:, 1:6, 1:4].tolist(),
     "sharp logits at positions 16380 to 16389": sharp_far_logits[:, 3:6, 1:4].tolist(),
     "logits": logits[:, 1:4, 1:4].tolist(),
     "logits at positions 16380 to 16389": far_logits[:, 3:6, 1:4].tolist(),

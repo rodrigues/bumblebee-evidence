@@ -1,7 +1,7 @@
 From 9dab90f985b0994447347cadb0775c0f202605cd Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Wed, 25 Nov 2026 00:41:17 +0000
-Subject: [PATCH 1/2] Add Ministral 3
+Subject: [PATCH 1/4] Add Ministral 3
 
 ---
  lib/bumblebee.ex                     |   4 +
@@ -518,7 +518,7 @@ index 067dac2..8256e11 100644
 From 3935722ce5d8057861182df8bf6455a63361b3e4 Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Wed, 25 Nov 2026 14:35:31 +0000
-Subject: [PATCH 2/2] Ministral 3: Let the loader infer the multimodal prefix
+Subject: [PATCH 2/4] Ministral 3: Let the loader infer the multimodal prefix
 
 ---
  lib/bumblebee/text/mistral.ex | 35 ++++++++++++-----------------------
@@ -572,6 +572,179 @@ index 5c27837..5406ca4 100644
          "sequence_classification_head.output" => "score"
        }
      end
+-- 
+2.56.1
+
+
+From e721d674c7e5d536acbedc87647c9085de39ff8b Mon Sep 17 00:00:00 2001
+From: Victor Rodrigues <vitumail@gmail.com>
+Date: Wed, 25 Nov 2026 15:24:35 +0000
+Subject: [PATCH 3/4] Ministral 3: Write the query scaling in defn, as other
+ layer implementations are
+
+---
+ lib/bumblebee/text/mistral.ex | 12 ++++++++----
+ 1 file changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/lib/bumblebee/text/mistral.ex b/lib/bumblebee/text/mistral.ex
+index 5406ca4..9cfe2d9 100644
+--- a/lib/bumblebee/text/mistral.ex
++++ b/lib/bumblebee/text/mistral.ex
+@@ -164,6 +164,7 @@ defmodule Bumblebee.Text.Mistral do
+   @behaviour Bumblebee.Text.Generation
+ 
+   import Bumblebee.Utils.Model, only: [join: 2]
++  import Nx.Defn
+ 
+   alias Bumblebee.Layers
+ 
+@@ -476,10 +477,13 @@ defmodule Bumblebee.Text.Mistral do
+     {attention_output, attention_weights, attention_cache}
+   end
+ 
+-  defp scale_query(query, position_ids, opts) do
+-    step = position_ids |> Nx.as_type(Nx.type(query)) |> Nx.divide(opts[:positions]) |> Nx.floor()
+-    scale = step |> Nx.add(1) |> Nx.log() |> Nx.multiply(opts[:beta]) |> Nx.add(1)
+-    Nx.multiply(query, scale |> Nx.new_axis(-1) |> Nx.new_axis(-1))
++  defnp scale_query(query, position_ids, opts \\ []) do
++    opts = keyword!(opts, [:beta, :positions, mode: :inference])
++
++    steps = Nx.floor(Nx.as_type(position_ids, Nx.type(query)) / opts[:positions])
++    scale = Nx.log(steps + 1) * opts[:beta] + 1
++
++    query * (scale |> Nx.new_axis(-1) |> Nx.new_axis(-1))
+   end
+ 
+   defp attention_window_size(spec) do
+-- 
+2.56.1
+
+
+From 9476f8530b848bb557bc8a804457ce38a59e0d40 Mon Sep 17 00:00:00 2001
+From: Victor Rodrigues <vitumail@gmail.com>
+Date: Thu, 26 Nov 2026 12:22:39 +0000
+Subject: [PATCH 4/4] Ministral 3: Compute the query scale from the integer
+ positions
+
+---
+ lib/bumblebee/text/mistral.ex        |  4 +-
+ test/bumblebee/text/mistral_test.exs | 74 +++++++++++++++++++---------
+ 2 files changed, 53 insertions(+), 25 deletions(-)
+
+diff --git a/lib/bumblebee/text/mistral.ex b/lib/bumblebee/text/mistral.ex
+index 9cfe2d9..ea31a4e 100644
+--- a/lib/bumblebee/text/mistral.ex
++++ b/lib/bumblebee/text/mistral.ex
+@@ -480,10 +480,10 @@ defmodule Bumblebee.Text.Mistral do
+   defnp scale_query(query, position_ids, opts \\ []) do
+     opts = keyword!(opts, [:beta, :positions, mode: :inference])
+ 
+-    steps = Nx.floor(Nx.as_type(position_ids, Nx.type(query)) / opts[:positions])
++    steps = Nx.quotient(position_ids, opts[:positions])
+     scale = Nx.log(steps + 1) * opts[:beta] + 1
+ 
+-    query * (scale |> Nx.new_axis(-1) |> Nx.new_axis(-1))
++    query * Nx.as_type(scale |> Nx.new_axis(-1) |> Nx.new_axis(-1), Nx.type(query))
+   end
+ 
+   defp attention_window_size(spec) do
+diff --git a/test/bumblebee/text/mistral_test.exs b/test/bumblebee/text/mistral_test.exs
+index 8256e11..a784b08 100644
+--- a/test/bumblebee/text/mistral_test.exs
++++ b/test/bumblebee/text/mistral_test.exs
+@@ -161,29 +161,7 @@ defmodule Bumblebee.Text.MistralTest do
+     assert {:ok, %{model: model, params: params}} =
+              Bumblebee.load_model({:hf, "hf-tiny-v2/tiny-random-Ministral3ForCausalLM"})
+ 
+-    # Random weights make attention nearly uniform, so sharper queries are
+-    # needed for the query scaling to change the logits
+-    params =
+-      update_in(params.data, fn data ->
+-        Map.new(data, fn
+-          {"decoder.blocks." <> _ = name, %{"kernel" => kernel} = layer} = entry ->
+-            if String.ends_with?(name, "self_attention.query"),
+-              do: {name, %{layer | "kernel" => Nx.multiply(kernel, 30.0)}},
+-              else: entry
+-
+-          entry ->
+-            entry
+-        end)
+-      end)
+-
+-    # The scaling starts at position 16384, the fifth of these
+-    inputs = %{
+-      "input_ids" => Nx.tensor([[10, 20, 30, 40, 50, 60, 70, 80, 0, 0]]),
+-      "attention_mask" => Nx.tensor([[1, 1, 1, 1, 1, 1, 1, 1, 0, 0]]),
+-      "position_ids" => Nx.iota({1, 10}) |> Nx.add(16380)
+-    }
+-
+-    outputs = Axon.predict(model, params, inputs)
++    outputs = Axon.predict(model, sharpen_queries(params), far_inputs())
+ 
+     assert_all_close(
+       outputs.logits[[.., 3..5, 1..3]],
+@@ -193,6 +171,31 @@ defmodule Bumblebee.Text.MistralTest do
+     )
+   end
+ 
++  test "Ministral 3 query scaling past the original context length in float16" do
++    assert {:ok, %{model: model, params: params}} =
++             Bumblebee.load_model({:hf, "hf-tiny-v2/tiny-random-Ministral3ForCausalLM"},
++               type: :f16
++             )
++
++    outputs = Axon.predict(model, sharpen_queries(params), far_inputs())
++
++    # Integer positions above 2048 are not exact in float16, so the scale
++    # has to come from the integer positions to switch at 16384
++    assert_all_close(
++      outputs.logits[[.., 1..5, 1..3]],
++      Nx.tensor([
++        [
++          [0.0937, -0.0620, 0.1614],
++          [-0.1292, -0.1943, 0.1064],
++          [-0.0837, -0.0518, 0.1326],
++          [-0.1127, 0.1216, -0.0759],
++          [-0.0837, -0.2484, -0.0080]
++        ]
++      ]),
++      atol: 5.0e-4
++    )
++  end
++
+   test "Ministral 3 query scaling with a short original context length" do
+     repo = {:hf, "hf-tiny-v2/tiny-random-Ministral3ForCausalLM"}
+     assert {:ok, spec} = Bumblebee.load_spec(repo)
+@@ -273,4 +276,29 @@ defmodule Bumblebee.Text.MistralTest do
+       ])
+     )
+   end
++
++  # Random weights make attention nearly uniform, so sharper queries are
++  # needed for the query scaling to change the logits
++  defp sharpen_queries(params) do
++    update_in(params.data, fn data ->
++      Map.new(data, fn
++        {"decoder.blocks." <> _ = name, %{"kernel" => kernel} = layer} = entry ->
++          if String.ends_with?(name, "self_attention.query"),
++            do: {name, %{layer | "kernel" => Nx.multiply(kernel, 30.0)}},
++            else: entry
++
++        entry ->
++          entry
++      end)
++    end)
++  end
++
++  # The scaling starts at position 16384, the fifth of these
++  defp far_inputs() do
++    %{
++      "input_ids" => Nx.tensor([[10, 20, 30, 40, 50, 60, 70, 80, 0, 0]]),
++      "attention_mask" => Nx.tensor([[1, 1, 1, 1, 1, 1, 1, 1, 0, 0]]),
++      "position_ids" => Nx.iota({1, 10}) |> Nx.add(16380)
++    }
++  end
+ end
 -- 
 2.56.1
 
