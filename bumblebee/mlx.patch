@@ -1,0 +1,84 @@
+diff --git a/lib/bumblebee/text/kimi_linear.ex b/lib/bumblebee/text/kimi_linear.ex
+index 203fee7..acefd58 100644
+--- a/lib/bumblebee/text/kimi_linear.ex
++++ b/lib/bumblebee/text/kimi_linear.ex
+@@ -822,19 +822,28 @@ defmodule Bumblebee.Text.KimiLinear do
+ 
+   defimpl Bumblebee.HuggingFace.Transformers.Model do
+     def params_mapping(spec) do
++      # MLX conversions rename the expert blocks and the convolutions
+       block = fn name -> "model.layers.{n}." <> name end
+-      moe = fn name -> block.("block_sparse_moe." <> name) end
++      moe = fn name -> [block.("block_sparse_moe." <> name), block.("mlp." <> name)] end
+ 
+-      stack = fn projection ->
++      stack = fn projection, mlx_projection ->
+         sources =
+           for expert <- 0..(spec.num_experts - 1) do
+-            {block.("block_sparse_moe.experts.#{expert}.#{projection}"), "weight"}
++            [{block.("block_sparse_moe.experts.#{expert}.#{projection}"), "weight"}]
+           end
+ 
+-        {sources, &Nx.stack/1}
++        [
++          {sources, &Nx.stack/1},
++          {[[{block.("mlp.switch_mlp.#{mlx_projection}"), "weight"}]], fn [kernel] -> kernel end}
++        ]
+       end
+ 
+-      conv_kernel = fn kind -> {block.("self_attn.#{kind}_conv1d"), "weight"} end
++      conv_kernel = fn kind ->
++        [
++          {block.("self_attn.#{kind}_conv1d"), "weight"},
++          {block.("self_attn.#{kind}_conv.conv"), "weight"}
++        ]
++      end
+ 
+       %{
+         "embedder.token_embedding" => "model.embed_tokens",
+@@ -850,12 +859,20 @@ defmodule Bumblebee.Text.KimiLinear do
+         "decoder.blocks.{n}.linear_attention.query" => block.("self_attn.q_proj"),
+         "decoder.blocks.{n}.linear_attention.key" => block.("self_attn.k_proj"),
+         "decoder.blocks.{n}.linear_attention.value" => block.("self_attn.v_proj"),
++        # The PyTorch kernels are {channels, 1, kernel_size}, and the MLX
++        # ones {channels, kernel_size, 1}
+         "decoder.blocks.{n}.linear_attention.conv" => %{
+           "kernel" =>
+             {[conv_kernel.("q"), conv_kernel.("k"), conv_kernel.("v")],
+              fn kernels ->
+                kernels
+-               |> Enum.map(fn kernel -> Nx.squeeze(kernel, axes: [1]) end)
++               |> Enum.map(fn kernel ->
++                 {channels, a, b} = Nx.shape(kernel)
++
++                 if a == 1,
++                   do: Nx.reshape(kernel, {channels, b}),
++                   else: Nx.reshape(kernel, {channels, a})
++               end)
+                |> Nx.concatenate()
+              end}
+         },
+@@ -876,14 +893,18 @@ defmodule Bumblebee.Text.KimiLinear do
+         "decoder.blocks.{n}.ffn.output" => block.("mlp.down_proj"),
+         "decoder.blocks.{n}.ffn.router" => moe.("gate"),
+         "decoder.blocks.{n}.ffn.experts" => %{
+-          "gate_kernel" => stack.("w1"),
+-          "intermediate_kernel" => stack.("w3"),
+-          "output_kernel" => stack.("w2")
++          "gate_kernel" => stack.("w1", "gate_proj"),
++          "intermediate_kernel" => stack.("w3", "up_proj"),
++          "output_kernel" => stack.("w2", "down_proj")
+         },
+         "decoder.blocks.{n}.ffn.routing" => %{
+           "selection_bias" =>
+-            {[{block.("block_sparse_moe.gate"), "e_score_correction_bias"}],
+-             fn [bias] -> bias end}
++            {[
++               [
++                 {block.("block_sparse_moe.gate"), "e_score_correction_bias"},
++                 {block.("mlp"), "e_score_correction_bias"}
++               ]
++             ], fn [bias] -> bias end}
+         },
+         "decoder.blocks.{n}.ffn.shared_expert.gate" => moe.("shared_experts.gate_proj"),
+         "decoder.blocks.{n}.ffn.shared_expert.intermediate" => moe.("shared_experts.up_proj"),

@@ -1,5 +1,5 @@
 diff --git a/lib/bumblebee.ex b/lib/bumblebee.ex
-index ba8c37c..5ed5dca 100644
+index 254bb8b..e5092b5 100644
 --- a/lib/bumblebee.ex
 +++ b/lib/bumblebee.ex
 @@ -68,6 +68,7 @@ defmodule Bumblebee do
@@ -18,7 +18,7 @@ index ba8c37c..5ed5dca 100644
      "llama4" => :llama,
      "llama4_text" => :llama,
      "mistral" => :llama,
-@@ -1023,53 +1025,15 @@ defmodule Bumblebee do
+@@ -989,53 +991,15 @@ defmodule Bumblebee do
      case get_repo_files(repository) do
        {:ok, %{@tokenizer_filename => etag} = repo_files} ->
          with {:ok, path} <- download(repository, @tokenizer_filename, etag) do
@@ -80,7 +80,7 @@ index ba8c37c..5ed5dca 100644
          end
  
        {:ok, %{@tokenizer_config_filename => _}} ->
-@@ -1086,6 +1050,84 @@ defmodule Bumblebee do
+@@ -1052,6 +1016,84 @@ defmodule Bumblebee do
      end
    end
  

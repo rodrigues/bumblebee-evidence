@@ -1,7 +1,7 @@
 {
   "results": {
     "capital": {
-      "decode_ms_per_token": 13.7,
+      "decode_ms_per_token": 13.8,
       "generated": [
         1008,
         10484,
@@ -104,7 +104,7 @@
         163586,
         163586
       ],
-      "prefill_ms": 97.2,
+      "prefill_ms": 98.1,
       "teacher_forced_argmax": [
         1008,
         10484,
@@ -209,7 +209,7 @@
       ]
     },
     "story": {
-      "decode_ms_per_token": 13.7,
+      "decode_ms_per_token": 13.6,
       "generated": [
         1008,
         116644,
@@ -312,7 +312,7 @@
         743,
         8691
       ],
-      "prefill_ms": 84.0,
+      "prefill_ms": 86.4,
       "teacher_forced_argmax": [
         1008,
         116644,
