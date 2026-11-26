@@ -8,7 +8,7 @@ Llama 4 differs from Llama 3 in four ways, and Bumblebee implements each:
 - The fourth block attends to the whole sequence, without position embedding, and scales its queries by 1 + 0.1 · log(1 + floor((position + 1) / 8192)).
 - The feed-forward networks are mixtures of experts whose router weights each expert's input by a sigmoid, beside a shared expert; Maverick puts them in every other block.
 
-The mixture of experts layer gains two options for this, a sigmoid router and weighting the inputs instead of the outputs.
+Llama 4 routes in its own model: it weights each chosen expert's copy of the token by the sigmoid, and passes the shared mixture of experts layer weights of 1.
 Multimodal checkpoints, `Llama4ForConditionalGeneration`, load as their language model.
 
 Every result is in [`bumblebee/outputs/`](bumblebee/outputs), so nothing needs running to read it; [Reproduce](#reproduce), at the end, reruns everything.
@@ -28,7 +28,7 @@ The Bumblebee test file on the branch checks the same values, and all of them pa
 The two built checkpoints attend in chunks of 4 tokens and step the query temperature every 2 positions, so a 12-token input crosses both, and generation from 6 tokens crosses them through the cache.
 Turning off each feature in transformers moves the logits by 144 (chunks), 5.3 (temperature) and 79 (normalization), so the tests depend on all three.
 The published tiny checkpoint has all its expert weights at zero, so the built checkpoints set every weight to random values.
-The layer tests check both routings on both expert paths against the output spelled out by hand.
+The shared layer's tests, on `qwen3-moe`, check both expert paths against the output spelled out by hand.
 The checkpoints load with no missing parameters and no shape mismatches; the multimodal one leaves only its vision tower and projector unused ([`params.txt`](bumblebee/outputs/params.txt)).
 
 ## A real checkpoint: Llama Guard 4
