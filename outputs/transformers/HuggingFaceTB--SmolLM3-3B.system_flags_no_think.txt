@@ -2,7 +2,7 @@
 ## Metadata
 
 Knowledge Cutoff Date: June 2025
-Today Date: 19 November 2026
+Today Date: 26 November 2026
 Reasoning Mode: /no_think
 
 ## Custom Instructions

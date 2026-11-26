@@ -1,6 +1,7 @@
 # Chat template parity
 
-This checks that `Bumblebee.apply_chat_template/3` renders the same prompts as `apply_chat_template` in transformers 5.23.
+This checks that `Bumblebee.apply_chat_template/3`, on branch `chat-templates`, renders the same prompts as `apply_chat_template` in transformers 5.23.
+The last run was on 2026-11-26, on commit 7580e47.
 
 `repos.txt` lists 13 chat checkpoints of architectures Bumblebee supports, one of them with named templates.
 `cases.json` holds 32 conversations, chosen to reach the branches of those templates: tool calls in every shape the templates check for, content as a string, a list of parts or null, reasoning under each of its names, template variables such as `enable_thinking`, `xml_tools` and `preserve_thinking`, and inputs that templates reject.
