@@ -1,27 +1,26 @@
 To run multi-device tests: XLA_FLAGS=--xla_force_host_platform_device_count=2 mix test
 To run tests without hitting the network: BUMBLEBEE_OFFLINE=true mix test
-Running ExUnit with seed: 168672, max_cases: 1
+Running ExUnit with seed: 959820, max_cases: 1
 Excluding tags: [:slow, :multi_device]
 
 
 Bumblebee.Text.Qwen3Test [test/bumblebee/text/qwen3_test.exs]
-  * test :base [L#8]  * test :base (1210.3ms) [L#8]
-  * test :for_causal_language_modeling [L#32]  * test :for_causal_language_modeling (198.3ms) [L#32]
-  * test :for_sequence_classification [L#56]  * test :for_sequence_classification (274.0ms) [L#56]
+  * test :for_sequence_classification [L#56]  * test :for_sequence_classification (1205.4ms) [L#56]
+  * test :for_causal_language_modeling [L#32]  * test :for_causal_language_modeling (148.9ms) [L#32]
+  * test :base [L#8]  * test :base (130.8ms) [L#8]
 
 Bumblebee.Text.Qwen3_5LocalTest [test/bumblebee/text/qwen3_5_local_test.exs]
-  * test a repeated token spanning several chunks of the linear attention [L#174]  * test a repeated token spanning several chunks of the linear attention (1785.1ms) [L#174]
-  * test :for_causal_language_modeling from an MLX checkpoint [L#88]  * test :for_causal_language_modeling from an MLX checkpoint (1026.0ms) [L#88]
-  * test left padding gives the same logits as unpadded inputs [L#204]  * test left padding gives the same logits as unpadded inputs (1939.8ms) [L#204]
-  * test inputs spanning several chunks of the linear attention [L#140]  * test inputs spanning several chunks of the linear attention (91.7ms) [L#140]
-  * test :base [L#8]  * test :base (52.3ms) [L#8]
-  * test refuses the mixture-of-experts variant [L#255]  * test refuses the mixture-of-experts variant (3.2ms) [L#255]
-  * test :for_causal_language_modeling [L#40]  * test :for_causal_language_modeling (50.2ms) [L#40]
-  * test :for_causal_language_modeling from a multimodal checkpoint [L#64]  * test :for_causal_language_modeling from a multimodal checkpoint (51.7ms) [L#64]
-  * test loads generation attributes from the text configuration [L#224]  * test loads generation attributes from the text configuration (0.9ms) [L#224]
-  * test generation with cache [L#115]  * test generation with cache (1419.4ms) [L#115]
-  * test uses the multimodal config to decide whether to tie output weights [L#235]  * test uses the multimodal config to decide whether to tie output weights (0.1ms) [L#235]
+  * test generation with cache [L#88]  * test generation with cache (2827.9ms) [L#88]
+  * test inputs spanning several chunks of the linear attention [L#113]  * test inputs spanning several chunks of the linear attention (1591.3ms) [L#113]
+  * test :for_causal_language_modeling from a multimodal checkpoint [L#64]  * test :for_causal_language_modeling from a multimodal checkpoint (745.5ms) [L#64]
+  * test a repeated token spanning several chunks of the linear attention [L#147]  * test a repeated token spanning several chunks of the linear attention (62.9ms) [L#147]
+  * test refuses the mixture-of-experts variant [L#228]  * test refuses the mixture-of-experts variant (3.5ms) [L#228]
+  * test left padding gives the same logits as unpadded inputs [L#177]  * test left padding gives the same logits as unpadded inputs (1138.6ms) [L#177]
+  * test :for_causal_language_modeling [L#40]  * test :for_causal_language_modeling (45.8ms) [L#40]
+  * test :base [L#8]  * test :base (45.3ms) [L#8]
+  * test loads generation attributes from the text configuration [L#197]  * test loads generation attributes from the text configuration (0.1ms) [L#197]
+  * test uses the multimodal config to decide whether to tie output weights [L#208]  * test uses the multimodal config to decide whether to tie output weights (0.09ms) [L#208]
 
-Finished in 8.1 seconds (0.00s async, 8.1s sync)
+Finished in 7.9 seconds (0.00s async, 7.9s sync)
 
-Result: 14 passed
+Result: 13 passed

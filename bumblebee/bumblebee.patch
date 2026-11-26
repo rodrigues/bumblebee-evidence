@@ -1,3 +1,17 @@
+From c7fa80eac594aa0045c1edead9bf5d9325b38445 Mon Sep 17 00:00:00 2001
+From: Victor Rodrigues <vitumail@gmail.com>
+Date: Fri, 20 Nov 2026 02:17:36 +0000
+Subject: [PATCH 01/11] Add Qwen3.5
+
+---
+ lib/bumblebee.ex                     |   5 +
+ lib/bumblebee/text/qwen3_5.ex        | 917 +++++++++++++++++++++++++++
+ mix.exs                              |   1 +
+ test/bumblebee/text/qwen3_5_test.exs | 175 +++++
+ 4 files changed, 1098 insertions(+)
+ create mode 100644 lib/bumblebee/text/qwen3_5.ex
+ create mode 100644 test/bumblebee/text/qwen3_5_test.exs
+
 diff --git a/lib/bumblebee.ex b/lib/bumblebee.ex
 index d38f787..46fd7d6 100644
 --- a/lib/bumblebee.ex
@@ -21,24 +35,12 @@ index d38f787..46fd7d6 100644
      "roberta" => :roberta,
      "smollm3" => :smollm3,
      "t5" => :t5,
-diff --git a/lib/bumblebee/text/generation_config.ex b/lib/bumblebee/text/generation_config.ex
-index d7a6a9a..281cb53 100644
---- a/lib/bumblebee/text/generation_config.ex
-+++ b/lib/bumblebee/text/generation_config.ex
-@@ -257,6 +257,7 @@ defmodule Bumblebee.Text.GenerationConfig do
-       data =
-         case data do
-           %{"model_type" => "blip", "text_config" => data} -> data
-+          %{"model_type" => "qwen3_5", "text_config" => data} -> data
-           data -> data
-         end
- 
 diff --git a/lib/bumblebee/text/qwen3_5.ex b/lib/bumblebee/text/qwen3_5.ex
 new file mode 100644
-index 0000000..7b376aa
+index 0000000..7291bcd
 --- /dev/null
 +++ b/lib/bumblebee/text/qwen3_5.ex
-@@ -0,0 +1,1037 @@
+@@ -0,0 +1,917 @@
 +defmodule Bumblebee.Text.Qwen3_5 do
 +  alias Bumblebee.Shared
 +
@@ -71,11 +73,11 @@ index 0000000..7b376aa
 +        default: 24,
 +        doc: "the number of blocks in the model"
 +      ],
-+      layer_types: [
++      block_types: [
 +        default: nil,
 +        doc: """
-+        the type of each layer, either `:linear_attention` or `:full_attention`.
-+        Defaults to `:full_attention` for every fourth layer and `:linear_attention`
++        the type of each block, either `:linear_attention` or `:full_attention`.
++        Defaults to `:full_attention` for every fourth block and `:linear_attention`
 +        for the others
 +        """
 +      ],
@@ -220,18 +222,18 @@ index 0000000..7b376aa
 +  def config(spec, opts) do
 +    spec = Shared.put_config_attrs(spec, opts)
 +
-+    layer_types =
-+      spec.layer_types ||
++    block_types =
++      spec.block_types ||
 +        for index <- 0..(spec.num_blocks - 1) do
 +          if rem(index + 1, 4) == 0, do: :full_attention, else: :linear_attention
 +        end
 +
-+    if length(layer_types) != spec.num_blocks do
++    if length(block_types) != spec.num_blocks do
 +      raise ArgumentError,
-+            "expected :layer_types to have #{spec.num_blocks} entries, got: #{length(layer_types)}"
++            "expected :block_types to have #{spec.num_blocks} entries, got: #{length(block_types)}"
 +    end
 +
-+    %{spec | layer_types: layer_types}
++    %{spec | block_types: block_types}
 +  end
 +
 +  @impl true
@@ -272,7 +274,7 @@ index 0000000..7b376aa
 +    blocks =
 +      cache.blocks
 +      |> Tuple.to_list()
-+      |> Enum.zip_with(spec.layer_types, fn
++      |> Enum.zip_with(spec.block_types, fn
 +        block, :full_attention -> block
 +        block, :linear_attention -> %{block | self_attention: linear_attention}
 +      end)
@@ -370,7 +372,7 @@ index 0000000..7b376aa
 +        normalized = rms_norm(hidden_state, spec, name: join(name, "self_attention_norm"))
 +
 +        {hidden_state, attention, self_attention_cache} =
-+          case Enum.fetch!(spec.layer_types, block.index) do
++          case Enum.fetch!(spec.block_types, block.index) do
 +            :full_attention ->
 +              gated_attention(normalized, position_ids, block, spec,
 +                name: join(name, "self_attention")
@@ -707,19 +709,13 @@ index 0000000..7b376aa
 +    -Nx.exp(Nx.as_type(a_log, :f32)) * softplus
 +  end
 +
-+  @chunk_size 64
-+
-+  # Decoding a single token needs one step of the recurrence, while longer
-+  # inputs are processed in chunks, as in the chunked form of the reference
-+  # implementation
++  # Decoding a single token needs one step of the recurrence, without
++  # the loop over the sequence
 +  deftransformp gated_delta_rule(query, key, value, beta, decay, state) do
-+    sequence_length = Nx.axis_size(value, 1)
-+
-+    if sequence_length == 1 do
++    if Nx.axis_size(value, 1) == 1 do
 +      gated_delta_rule_single(query, key, value, beta, decay, state)
 +    else
-+      padding = rem(@chunk_size - rem(sequence_length, @chunk_size), @chunk_size)
-+      gated_delta_rule_chunked(query, key, value, beta, decay, state, padding: padding)
++      gated_delta_rule_loop(query, key, value, beta, decay, state)
 +    end
 +  end
 +
@@ -739,140 +735,33 @@ index 0000000..7b376aa
 +    {Nx.new_axis(output, 1), state}
 +  end
 +
-+  # Within a chunk, the delta rule updates are condensed into matrix
-+  # products by solving a unit lower triangular system, so the loop runs
-+  # once per chunk instead of once per token
-+  defnp gated_delta_rule_chunked(query, key, value, beta, decay, state, opts \\ []) do
-+    opts = keyword!(opts, [:padding])
++  # Processes the sequence one token at a time, updating the recurrent
++  # state with the delta rule, as in the recurrent form of the reference
++  # implementation
++  defnp gated_delta_rule_loop(query, key, value, beta, decay, state) do
 +    {query, key} = normalize_query_key(query, key)
-+    {batch_size, sequence_length, num_heads, value_head_size} = Nx.shape(value)
 +
-+    query = to_chunks(query, opts[:padding])
-+    key = to_chunks(key, opts[:padding])
-+    value = to_chunks(value, opts[:padding])
-+    beta = to_chunks(beta, opts[:padding])
-+    decay = to_chunks(decay, opts[:padding])
++    sequence_length = Nx.axis_size(value, 1)
++    output = Nx.broadcast(0.0, value)
 +
-+    key_beta = key * Nx.new_axis(beta, -1)
-+    value_beta = value * Nx.new_axis(beta, -1)
++    {output, state, _query, _key, _value, _beta, _decay, _index} =
++      while {output, state, query, key, value, beta, decay, index = 0},
++            index < sequence_length do
++        {o, state} =
++          delta_step(
++            take_step(query, index),
++            take_step(key, index),
++            take_step(value, index),
++            take_step(beta, index),
++            take_step(decay, index),
++            state
++          )
 +
-+    # The decay accumulated from the start of the chunk to each position,
-+    # and between each pair of positions
-+    cumulative_decay = Nx.cumulative_sum(decay, axis: 3)
-+
-+    lower =
-+      Nx.greater_equal(
-+        Nx.iota({@chunk_size, @chunk_size}, axis: 0),
-+        Nx.iota({@chunk_size, @chunk_size}, axis: 1)
-+      )
-+
-+    pairwise = Nx.new_axis(cumulative_decay, 4) - Nx.new_axis(cumulative_decay, 3)
-+
-+    pairwise_decay =
-+      Nx.exp(Nx.select(Nx.broadcast(lower, pairwise), pairwise, Nx.Constants.neg_infinity(:f32)))
-+
-+    system = Nx.dot(key_beta, [4], [0, 1, 2], key, [4], [0, 1, 2]) * pairwise_decay
-+    intra_chunk = Nx.dot(query, [4], [0, 1, 2], key, [4], [0, 1, 2]) * pairwise_decay
-+
-+    strictly_lower =
-+      Nx.greater(
-+        Nx.iota({@chunk_size, @chunk_size}, axis: 0),
-+        Nx.iota({@chunk_size, @chunk_size}, axis: 1)
-+      )
-+
-+    unit_lower =
-+      Nx.select(Nx.broadcast(strictly_lower, system), system, 0.0) + Nx.eye(@chunk_size)
-+
-+    decayed_key_beta = key_beta * Nx.new_axis(Nx.exp(cumulative_decay), -1)
-+
-+    solution =
-+      Nx.LinAlg.triangular_solve(
-+        unit_lower,
-+        Nx.concatenate([value_beta, decayed_key_beta], axis: 4),
-+        lower: true
-+      )
-+
-+    new_values = Nx.slice_along_axis(solution, 0, value_head_size, axis: 4)
-+
-+    key_cumulative_decay =
-+      Nx.slice_along_axis(solution, value_head_size, Nx.axis_size(decayed_key_beta, 4), axis: 4)
-+
-+    last_decay = Nx.slice_along_axis(cumulative_decay, @chunk_size - 1, 1, axis: 3)
-+    query = query * Nx.new_axis(Nx.exp(cumulative_decay), -1)
-+    key = key * Nx.new_axis(Nx.exp(last_decay - cumulative_decay), -1)
-+    chunk_decay = Nx.new_axis(Nx.exp(last_decay), -1)
-+
-+    {output, state} =
-+      chunk_scan(query, key, new_values, key_cumulative_decay, intra_chunk, chunk_decay, state)
-+
-+    output =
-+      output
-+      |> Nx.reshape({batch_size, num_heads, :auto, value_head_size})
-+      |> Nx.slice_along_axis(0, sequence_length, axis: 2)
-+      |> Nx.transpose(axes: [0, 2, 1, 3])
++        output = Nx.put_slice(output, [0, index, 0, 0], Nx.new_axis(o, 1))
++        {output, state, query, key, value, beta, decay, index + 1}
++      end
 +
 +    {output, state}
-+  end
-+
-+  # Moves the heads before the sequence, pads the sequence to whole chunks
-+  # and splits it into chunks
-+  deftransformp to_chunks(tensor, padding) do
-+    [batch_size, sequence_length, num_heads | rest] = tensor |> Nx.shape() |> Tuple.to_list()
-+    axes = [0, 2, 1 | Enum.drop(Nx.axes(tensor), 3)]
-+
-+    padding_config = [
-+      {0, 0, 0},
-+      {0, 0, 0},
-+      {0, padding, 0} | Enum.map(rest, fn _ -> {0, 0, 0} end)
-+    ]
-+
-+    num_chunks = div(sequence_length + padding, @chunk_size)
-+
-+    tensor
-+    |> Nx.transpose(axes: axes)
-+    |> Nx.pad(0.0, padding_config)
-+    |> Nx.reshape(List.to_tuple([batch_size, num_heads, num_chunks, @chunk_size | rest]))
-+  end
-+
-+  # The number of chunks is known when building the graph, so the loop is
-+  # unrolled into a single graph
-+  deftransformp chunk_scan(
-+                  query,
-+                  key,
-+                  new_values,
-+                  key_cumulative_decay,
-+                  intra_chunk,
-+                  chunk_decay,
-+                  state
-+                ) do
-+    num_chunks = Nx.axis_size(new_values, 2)
-+
-+    {outputs, state} =
-+      Enum.map_reduce(0..(num_chunks - 1), state, fn index, state ->
-+        take = &(&1 |> Nx.slice_along_axis(index, 1, axis: 2) |> Nx.squeeze(axes: [2]))
-+
-+        delta =
-+          Nx.subtract(
-+            take.(new_values),
-+            Nx.dot(take.(key_cumulative_decay), [3], [0, 1], state, [2], [0, 1])
-+          )
-+
-+        output =
-+          Nx.add(
-+            Nx.dot(take.(query), [3], [0, 1], state, [2], [0, 1]),
-+            Nx.dot(take.(intra_chunk), [3], [0, 1], delta, [2], [0, 1])
-+          )
-+
-+        state =
-+          Nx.add(
-+            Nx.multiply(state, take.(chunk_decay)),
-+            Nx.dot(take.(key), [2], [0, 1], delta, [2], [0, 1])
-+          )
-+
-+        {output, state}
-+      end)
-+
-+    {Nx.stack(outputs, axis: 2), state}
 +  end
 +
 +  defnp normalize_query_key(query, key) do
@@ -885,6 +774,12 @@ index 0000000..7b376aa
 +    delta = (v - memory) * Nx.new_axis(b, -1)
 +    state = state + Nx.new_axis(k, -1) * Nx.new_axis(delta, 2)
 +    {Nx.sum(state * Nx.new_axis(q, -1), axes: [2]), state}
++  end
++
++  defnp take_step(tensor, index) do
++    tensor
++    |> Nx.slice_along_axis(index, 1, axis: 1)
++    |> Nx.squeeze(axes: [1])
 +  end
 +
 +  defnp l2_normalize(x) do
@@ -932,16 +827,18 @@ index 0000000..7b376aa
 +  end
 +
 +  defimpl Bumblebee.HuggingFace.Transformers.Config do
-+    def load(spec, %{"model_type" => "qwen3_5", "text_config" => %{} = text_config} = data) do
-+      # The multimodal config controls whether the output head is tied.
-+      text_config =
-+        Map.put(text_config, "tie_word_embeddings", Map.get(data, "tie_word_embeddings", false))
-+
-+      load(spec, text_config)
-+    end
-+
 +    def load(spec, data) do
 +      import Shared.Converters
++
++      # Multimodal checkpoints nest the language model configuration
++      data =
++        case data do
++          %{"text_config" => text_data} ->
++            Map.put_new(text_data, "tie_word_embeddings", data["tie_word_embeddings"])
++
++          data ->
++            data
++        end
 +
 +      # Qwen3.5 configurations set unused token ids to null
 +      data =
@@ -956,7 +853,7 @@ index 0000000..7b376aa
 +          max_positions: {"max_position_embeddings", number()},
 +          hidden_size: {"hidden_size", number()},
 +          num_blocks: {"num_hidden_layers", number()},
-+          layer_types:
++          block_types:
 +            {"layer_types",
 +             list(
 +               mapping(%{
@@ -986,25 +883,15 @@ index 0000000..7b376aa
 +
 +  defimpl Bumblebee.HuggingFace.Transformers.Model do
 +    def params_mapping(spec) do
-+      # Text-only, multimodal and MLX checkpoints store the language model
-+      # under different prefixes. The loader infers one prefix for every
-+      # name in the mapping, but MLX checkpoints keep the head outside the
-+      # prefix of the layers, so the causal model lists each prefix, and
-+      # the base model, which has no head, relies on the inference
-+      layer =
-+        case spec.architecture do
-+          :base ->
-+            fn name -> [name] end
-+
-+          :for_causal_language_modeling ->
-+            fn name ->
-+              [
-+                "model." <> name,
-+                "model.language_model." <> name,
-+                "language_model.model." <> name
-+              ]
-+            end
-+        end
++      # Text-only, multimodal and MLX checkpoints store the language
++      # model under different prefixes
++      layer = fn name ->
++        [
++          "model." <> name,
++          "model.language_model." <> name,
++          "language_model.model." <> name
++        ]
++      end
 +
 +      # MLX checkpoints store these norm weights with the shift of 1
 +      # added, and the convolution kernel as {channels, kernel_size, 1}
@@ -1023,7 +910,7 @@ index 0000000..7b376aa
 +        }
 +      end
 +
-+      mapping = %{
++      %{
 +        "embedder.token_embedding" => layer.("embed_tokens"),
 +        "decoder.blocks.{n}.self_attention_norm" => norm.("layers.{n}.input_layernorm"),
 +        "decoder.blocks.{n}.self_attention.query" => layer.("layers.{n}.self_attn.q_proj"),
@@ -1064,11 +951,6 @@ index 0000000..7b376aa
 +            else: ["lm_head", "language_model.lm_head"]
 +          )
 +      }
-+
-+      case spec.architecture do
-+        :base -> Map.delete(mapping, "language_modeling_head.output")
-+        :for_causal_language_modeling -> mapping
-+      end
 +    end
 +
 +    defp param_refs(layer_names, param_name) do
@@ -1090,10 +972,10 @@ index 7b92639..361b2e3 100644
            Bumblebee.Text.SmolLm3,
 diff --git a/test/bumblebee/text/qwen3_5_test.exs b/test/bumblebee/text/qwen3_5_test.exs
 new file mode 100644
-index 0000000..f39bcc8
+index 0000000..790048f
 --- /dev/null
 +++ b/test/bumblebee/text/qwen3_5_test.exs
-@@ -0,0 +1,268 @@
+@@ -0,0 +1,175 @@
 +defmodule Bumblebee.Text.Qwen3_5Test do
 +  use ExUnit.Case, async: false
 +
@@ -1103,11 +985,13 @@ index 0000000..f39bcc8
 +
 +  test ":base" do
 +    assert {:ok, %{model: model, params: params, spec: spec}} =
-+             Bumblebee.load_model({:hf, "bumblebee-testing/tiny-random-Qwen3_5TextModel"})
++             Bumblebee.load_model({:hf, "bumblebee-testing/tiny-random-Qwen3_5ForCausalLM"},
++               architecture: :base
++             )
 +
 +    assert %Bumblebee.Text.Qwen3_5{architecture: :base} = spec
 +
-+    assert spec.layer_types == [
++    assert spec.block_types == [
 +             :linear_attention,
 +             :linear_attention,
 +             :linear_attention,
@@ -1127,7 +1011,7 @@ index 0000000..f39bcc8
 +    assert_all_close(
 +      outputs.hidden_state[[.., 1..3, 1..3]],
 +      Nx.tensor([
-+        [[0.5431, -1.7083, -1.5362], [-0.3338, -1.6407, -0.5881], [-0.2545, -0.8469, -0.0288]]
++        [[1.4133, 0.5996, -2.3100], [1.2465, 0.0291, 0.3573], [-1.9832, -0.8136, 0.5604]]
 +      ]),
 +      atol: 1.0e-4
 +    )
@@ -1233,6 +1117,323 @@ index 0000000..f39bcc8
 +    assert_equal(token_ids, Nx.tensor([[279, 537, 784, 485, 860, 775, 279, 973]]))
 +  end
 +
++  test "left padding gives the same logits as unpadded inputs" do
++    assert {:ok, %{model: model, params: params}} =
++             Bumblebee.load_model({:hf, "bumblebee-testing/tiny-random-Qwen3_5ForCausalLM"})
++
++    unpadded =
++      Axon.predict(model, params, %{
++        "input_ids" => Nx.tensor([[10, 20, 30, 40, 50, 60]])
++      })
++
++    # Position ids skip the padding, as in generation
++    padded =
++      Axon.predict(model, params, %{
++        "input_ids" => Nx.tensor([[0, 0, 10, 20, 30, 40, 50, 60]]),
++        "attention_mask" => Nx.tensor([[0, 0, 1, 1, 1, 1, 1, 1]]),
++        "position_ids" => Nx.tensor([[0, 0, 0, 1, 2, 3, 4, 5]])
++      })
++
++    assert_all_close(padded.logits[[.., 2..-1//1]], unpadded.logits, atol: 1.0e-5)
++  end
++
++  test "refuses the mixture-of-experts variant" do
++    path = Path.join(System.tmp_dir!(), "bumblebee-qwen3_5-moe")
++    File.mkdir_p!(path)
++
++    File.write!(
++      Path.join(path, "config.json"),
++      ~s({"architectures": ["Qwen3_5MoeForConditionalGeneration"], "model_type": "qwen3_5_moe"})
++    )
++
++    assert_raise ArgumentError, ~r/"Qwen3_5MoeForConditionalGeneration"/, fn ->
++      Bumblebee.load_spec({:local, path})
++    end
++  end
++end
+-- 
+2.56.1
+
+
+From f433f0959c47984663ba3b57cda3042e15d5e8f6 Mon Sep 17 00:00:00 2001
+From: Victor Rodrigues <vitumail@gmail.com>
+Date: Fri, 20 Nov 2026 02:26:30 +0000
+Subject: [PATCH 02/11] Load Qwen3.5 generation attributes from the text
+ configuration
+
+---
+ lib/bumblebee/text/generation_config.ex |  1 +
+ test/bumblebee/text/qwen3_5_test.exs    | 11 +++++++++++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/lib/bumblebee/text/generation_config.ex b/lib/bumblebee/text/generation_config.ex
+index d7a6a9a..281cb53 100644
+--- a/lib/bumblebee/text/generation_config.ex
++++ b/lib/bumblebee/text/generation_config.ex
+@@ -257,6 +257,7 @@ defmodule Bumblebee.Text.GenerationConfig do
+       data =
+         case data do
+           %{"model_type" => "blip", "text_config" => data} -> data
++          %{"model_type" => "qwen3_5", "text_config" => data} -> data
+           data -> data
+         end
+ 
+diff --git a/test/bumblebee/text/qwen3_5_test.exs b/test/bumblebee/text/qwen3_5_test.exs
+index 790048f..686a7ee 100644
+--- a/test/bumblebee/text/qwen3_5_test.exs
++++ b/test/bumblebee/text/qwen3_5_test.exs
+@@ -159,6 +159,17 @@ defmodule Bumblebee.Text.Qwen3_5Test do
+     assert_all_close(padded.logits[[.., 2..-1//1]], unpadded.logits, atol: 1.0e-5)
+   end
+ 
++  test "loads generation attributes from the text configuration" do
++    # Multimodal checkpoints without generation_config.json keep the
++    # token ids in the nested text configuration
++    data = %{"model_type" => "qwen3_5", "text_config" => %{"eos_token_id" => 248_044}}
++
++    config =
++      Bumblebee.HuggingFace.Transformers.Config.load(%Bumblebee.Text.GenerationConfig{}, data)
++
++    assert config.eos_token_id == 248_044
++  end
++
+   test "refuses the mixture-of-experts variant" do
+     path = Path.join(System.tmp_dir!(), "bumblebee-qwen3_5-moe")
+     File.mkdir_p!(path)
+-- 
+2.56.1
+
+
+From 0421b814eb3791fd15eea575e91f778a078ebd79 Mon Sep 17 00:00:00 2001
+From: Victor Rodrigues <vitumail@gmail.com>
+Date: Fri, 20 Nov 2026 11:36:26 +0000
+Subject: [PATCH 03/11] Qwen3.5: Compute the linear attention in chunks over
+ the prompt
+
+---
+ lib/bumblebee/text/qwen3_5.ex        | 176 ++++++++++++++++++++++-----
+ test/bumblebee/text/qwen3_5_test.exs |  34 ++++++
+ 2 files changed, 178 insertions(+), 32 deletions(-)
+
+diff --git a/lib/bumblebee/text/qwen3_5.ex b/lib/bumblebee/text/qwen3_5.ex
+index 7291bcd..1a9fb16 100644
+--- a/lib/bumblebee/text/qwen3_5.ex
++++ b/lib/bumblebee/text/qwen3_5.ex
+@@ -666,13 +666,19 @@ defmodule Bumblebee.Text.Qwen3_5 do
+     -Nx.exp(Nx.as_type(a_log, :f32)) * softplus
+   end
+ 
+-  # Decoding a single token needs one step of the recurrence, without
+-  # the loop over the sequence
++  @chunk_size 64
++
++  # Decoding a single token needs one step of the recurrence, while longer
++  # inputs are processed in chunks, as in the chunked form of the reference
++  # implementation
+   deftransformp gated_delta_rule(query, key, value, beta, decay, state) do
+-    if Nx.axis_size(value, 1) == 1 do
++    sequence_length = Nx.axis_size(value, 1)
++
++    if sequence_length == 1 do
+       gated_delta_rule_single(query, key, value, beta, decay, state)
+     else
+-      gated_delta_rule_loop(query, key, value, beta, decay, state)
++      padding = rem(@chunk_size - rem(sequence_length, @chunk_size), @chunk_size)
++      gated_delta_rule_chunked(query, key, value, beta, decay, state, padding: padding)
+     end
+   end
+ 
+@@ -692,35 +698,147 @@ defmodule Bumblebee.Text.Qwen3_5 do
+     {Nx.new_axis(output, 1), state}
+   end
+ 
+-  # Processes the sequence one token at a time, updating the recurrent
+-  # state with the delta rule, as in the recurrent form of the reference
+-  # implementation
+-  defnp gated_delta_rule_loop(query, key, value, beta, decay, state) do
++  # Within a chunk, the delta rule updates are condensed into matrix
++  # products by solving a unit lower triangular system, so the loop runs
++  # once per chunk instead of once per token
++  defnp gated_delta_rule_chunked(query, key, value, beta, decay, state, opts \\ []) do
++    opts = keyword!(opts, [:padding])
+     {query, key} = normalize_query_key(query, key)
++    {batch_size, sequence_length, num_heads, value_head_size} = Nx.shape(value)
+ 
+-    sequence_length = Nx.axis_size(value, 1)
+-    output = Nx.broadcast(0.0, value)
+-
+-    {output, state, _query, _key, _value, _beta, _decay, _index} =
+-      while {output, state, query, key, value, beta, decay, index = 0},
+-            index < sequence_length do
+-        {o, state} =
+-          delta_step(
+-            take_step(query, index),
+-            take_step(key, index),
+-            take_step(value, index),
+-            take_step(beta, index),
+-            take_step(decay, index),
+-            state
+-          )
++    query = to_chunks(query, opts[:padding])
++    key = to_chunks(key, opts[:padding])
++    value = to_chunks(value, opts[:padding])
++    beta = to_chunks(beta, opts[:padding])
++    decay = to_chunks(decay, opts[:padding])
+ 
+-        output = Nx.put_slice(output, [0, index, 0, 0], Nx.new_axis(o, 1))
+-        {output, state, query, key, value, beta, decay, index + 1}
+-      end
++    key_beta = key * Nx.new_axis(beta, -1)
++    value_beta = value * Nx.new_axis(beta, -1)
++
++    # The decay accumulated from the start of the chunk to each position,
++    # and between each pair of positions
++    cumulative_decay = Nx.cumulative_sum(decay, axis: 3)
++
++    lower =
++      Nx.greater_equal(
++        Nx.iota({@chunk_size, @chunk_size}, axis: 0),
++        Nx.iota({@chunk_size, @chunk_size}, axis: 1)
++      )
++
++    pairwise = Nx.new_axis(cumulative_decay, 4) - Nx.new_axis(cumulative_decay, 3)
++
++    pairwise_decay =
++      Nx.exp(Nx.select(Nx.broadcast(lower, pairwise), pairwise, Nx.Constants.neg_infinity(:f32)))
++
++    system = Nx.dot(key_beta, [4], [0, 1, 2], key, [4], [0, 1, 2]) * pairwise_decay
++    intra_chunk = Nx.dot(query, [4], [0, 1, 2], key, [4], [0, 1, 2]) * pairwise_decay
++    inverse = unit_lower_triangular_inverse(system)
++
++    new_values = Nx.dot(inverse, [4], [0, 1, 2], value_beta, [3], [0, 1, 2])
++    decayed_key_beta = key_beta * Nx.new_axis(Nx.exp(cumulative_decay), -1)
++    key_cumulative_decay = Nx.dot(inverse, [4], [0, 1, 2], decayed_key_beta, [3], [0, 1, 2])
++
++    last_decay = Nx.slice_along_axis(cumulative_decay, @chunk_size - 1, 1, axis: 3)
++    query = query * Nx.new_axis(Nx.exp(cumulative_decay), -1)
++    key = key * Nx.new_axis(Nx.exp(last_decay - cumulative_decay), -1)
++    chunk_decay = Nx.new_axis(Nx.exp(last_decay), -1)
++
++    {output, state} =
++      chunk_scan(query, key, new_values, key_cumulative_decay, intra_chunk, chunk_decay, state)
++
++    output =
++      output
++      |> Nx.reshape({batch_size, num_heads, :auto, value_head_size})
++      |> Nx.slice_along_axis(0, sequence_length, axis: 2)
++      |> Nx.transpose(axes: [0, 2, 1, 3])
+ 
+     {output, state}
+   end
+ 
++  # Moves the heads before the sequence, pads the sequence to whole chunks
++  # and splits it into chunks
++  deftransformp to_chunks(tensor, padding) do
++    [batch_size, sequence_length, num_heads | rest] = tensor |> Nx.shape() |> Tuple.to_list()
++    axes = [0, 2, 1 | Enum.drop(Nx.axes(tensor), 3)]
++
++    padding_config = [
++      {0, 0, 0},
++      {0, 0, 0},
++      {0, padding, 0} | Enum.map(rest, fn _ -> {0, 0, 0} end)
++    ]
++
++    num_chunks = div(sequence_length + padding, @chunk_size)
++
++    tensor
++    |> Nx.transpose(axes: axes)
++    |> Nx.pad(0.0, padding_config)
++    |> Nx.reshape(List.to_tuple([batch_size, num_heads, num_chunks, @chunk_size | rest]))
++  end
++
++  # The number of chunks is known when building the graph, so the loop is
++  # unrolled into a single graph
++  deftransformp chunk_scan(
++                  query,
++                  key,
++                  new_values,
++                  key_cumulative_decay,
++                  intra_chunk,
++                  chunk_decay,
++                  state
++                ) do
++    num_chunks = Nx.axis_size(new_values, 2)
++
++    {outputs, state} =
++      Enum.map_reduce(0..(num_chunks - 1), state, fn index, state ->
++        take = &(&1 |> Nx.slice_along_axis(index, 1, axis: 2) |> Nx.squeeze(axes: [2]))
++
++        delta =
++          Nx.subtract(
++            take.(new_values),
++            Nx.dot(take.(key_cumulative_decay), [3], [0, 1], state, [2], [0, 1])
++          )
++
++        output =
++          Nx.add(
++            Nx.dot(take.(query), [3], [0, 1], state, [2], [0, 1]),
++            Nx.dot(take.(intra_chunk), [3], [0, 1], delta, [2], [0, 1])
++          )
++
++        state =
++          Nx.add(
++            Nx.multiply(state, take.(chunk_decay)),
++            Nx.dot(take.(key), [2], [0, 1], delta, [2], [0, 1])
++          )
++
++        {output, state}
++      end)
++
++    {Nx.stack(outputs, axis: 2), state}
++  end
++
++  # The inverse of the identity plus the strictly lower part L of each
++  # matrix. L is nilpotent, so the inverse is the finite series
++  # I - L + L^2 - ..., computed as (I - L)(I + L^2)(I + L^4)...
++  deftransformp unit_lower_triangular_inverse(system) do
++    size = Nx.axis_size(system, -1)
++    strictly_lower = Nx.greater(Nx.iota({size, size}, axis: 0), Nx.iota({size, size}, axis: 1))
++    power = Nx.negate(Nx.select(Nx.broadcast(strictly_lower, system), system, 0.0))
++    identity = Nx.eye(size)
++    steps = ceil(:math.log2(size)) - 1
++
++    {inverse, _power} =
++      Enum.reduce(1..steps, {Nx.add(identity, power), power}, fn _, {inverse, power} ->
++        power = batched_matmul(power, power)
++        {batched_matmul(inverse, Nx.add(identity, power)), power}
++      end)
++
++    inverse
++  end
++
++  deftransformp batched_matmul(left, right) do
++    Nx.dot(left, [4], [0, 1, 2], right, [3], [0, 1, 2])
++  end
++
+   defnp normalize_query_key(query, key) do
+     {l2_normalize(query) / Nx.sqrt(Nx.axis_size(query, -1)), l2_normalize(key)}
+   end
+@@ -733,12 +851,6 @@ defmodule Bumblebee.Text.Qwen3_5 do
+     {Nx.sum(state * Nx.new_axis(q, -1), axes: [2]), state}
+   end
+ 
+-  defnp take_step(tensor, index) do
+-    tensor
+-    |> Nx.slice_along_axis(index, 1, axis: 1)
+-    |> Nx.squeeze(axes: [1])
+-  end
+-
+   defnp l2_normalize(x) do
+     x * Nx.rsqrt(Nx.sum(x * x, axes: [-1], keep_axes: true) + 1.0e-6)
+   end
+diff --git a/test/bumblebee/text/qwen3_5_test.exs b/test/bumblebee/text/qwen3_5_test.exs
+index 686a7ee..556a950 100644
+--- a/test/bumblebee/text/qwen3_5_test.exs
++++ b/test/bumblebee/text/qwen3_5_test.exs
+@@ -139,6 +139,40 @@ defmodule Bumblebee.Text.Qwen3_5Test do
+     assert_equal(token_ids, Nx.tensor([[279, 537, 784, 485, 860, 775, 279, 973]]))
+   end
+ 
 +  test "inputs spanning several chunks of the linear attention" do
 +    assert {:ok, %{model: model, params: params}} =
 +             Bumblebee.load_model({:hf, "bumblebee-testing/tiny-random-Qwen3_5ForCausalLM"})
@@ -1267,6 +1468,368 @@ index 0000000..f39bcc8
 +    )
 +  end
 +
+   test "left padding gives the same logits as unpadded inputs" do
+     assert {:ok, %{model: model, params: params}} =
+              Bumblebee.load_model({:hf, "bumblebee-testing/tiny-random-Qwen3_5ForCausalLM"})
+-- 
+2.56.1
+
+
+From 96ed415d6f2a0225eec4bcd4355aed5c0d51883b Mon Sep 17 00:00:00 2001
+From: Victor Rodrigues <vitumail@gmail.com>
+Date: Sun, 22 Nov 2026 16:02:54 +0000
+Subject: [PATCH 04/11] Qwen3.5: Load base checkpoints without a prefix
+
+---
+ lib/bumblebee/text/qwen3_5.ex        | 31 ++++++++++++++++++++--------
+ test/bumblebee/text/qwen3_5_test.exs |  6 ++----
+ 2 files changed, 24 insertions(+), 13 deletions(-)
+
+diff --git a/lib/bumblebee/text/qwen3_5.ex b/lib/bumblebee/text/qwen3_5.ex
+index 1a9fb16..90e25f5 100644
+--- a/lib/bumblebee/text/qwen3_5.ex
++++ b/lib/bumblebee/text/qwen3_5.ex
+@@ -953,14 +953,22 @@ defmodule Bumblebee.Text.Qwen3_5 do
+   defimpl Bumblebee.HuggingFace.Transformers.Model do
+     def params_mapping(spec) do
+       # Text-only, multimodal and MLX checkpoints store the language
+-      # model under different prefixes
+-      layer = fn name ->
+-        [
+-          "model." <> name,
+-          "model.language_model." <> name,
+-          "language_model.model." <> name
+-        ]
+-      end
++      # model under different prefixes. Without a head, the prefix is
++      # inferred on load, which also covers the unprefixed base checkpoint
++      layer =
++        case spec.architecture do
++          :base ->
++            fn name -> [name] end
++
++          :for_causal_language_modeling ->
++            fn name ->
++              [
++                "model." <> name,
++                "model.language_model." <> name,
++                "language_model.model." <> name
++              ]
++            end
++        end
+ 
+       # MLX checkpoints store these norm weights with the shift of 1
+       # added, and the convolution kernel as {channels, kernel_size, 1}
+@@ -979,7 +987,7 @@ defmodule Bumblebee.Text.Qwen3_5 do
+         }
+       end
+ 
+-      %{
++      mapping = %{
+         "embedder.token_embedding" => layer.("embed_tokens"),
+         "decoder.blocks.{n}.self_attention_norm" => norm.("layers.{n}.input_layernorm"),
+         "decoder.blocks.{n}.self_attention.query" => layer.("layers.{n}.self_attn.q_proj"),
+@@ -1020,6 +1028,11 @@ defmodule Bumblebee.Text.Qwen3_5 do
+             else: ["lm_head", "language_model.lm_head"]
+           )
+       }
++
++      case spec.architecture do
++        :base -> Map.delete(mapping, "language_modeling_head.output")
++        :for_causal_language_modeling -> mapping
++      end
+     end
+ 
+     defp param_refs(layer_names, param_name) do
+diff --git a/test/bumblebee/text/qwen3_5_test.exs b/test/bumblebee/text/qwen3_5_test.exs
+index 556a950..e44223d 100644
+--- a/test/bumblebee/text/qwen3_5_test.exs
++++ b/test/bumblebee/text/qwen3_5_test.exs
+@@ -7,9 +7,7 @@ defmodule Bumblebee.Text.Qwen3_5Test do
+ 
+   test ":base" do
+     assert {:ok, %{model: model, params: params, spec: spec}} =
+-             Bumblebee.load_model({:hf, "bumblebee-testing/tiny-random-Qwen3_5ForCausalLM"},
+-               architecture: :base
+-             )
++             Bumblebee.load_model({:hf, "bumblebee-testing/tiny-random-Qwen3_5TextModel"})
+ 
+     assert %Bumblebee.Text.Qwen3_5{architecture: :base} = spec
+ 
+@@ -33,7 +31,7 @@ defmodule Bumblebee.Text.Qwen3_5Test do
+     assert_all_close(
+       outputs.hidden_state[[.., 1..3, 1..3]],
+       Nx.tensor([
+-        [[1.4133, 0.5996, -2.3100], [1.2465, 0.0291, 0.3573], [-1.9832, -0.8136, 0.5604]]
++        [[0.5431, -1.7083, -1.5362], [-0.3338, -1.6407, -0.5881], [-0.2545, -0.8469, -0.0288]]
+       ]),
+       atol: 1.0e-4
+     )
+-- 
+2.56.1
+
+
+From cc4bbb1c02bd0973ae8e5f9b764eec58b056d80d Mon Sep 17 00:00:00 2001
+From: Victor Rodrigues <vitumail@gmail.com>
+Date: Tue, 24 Nov 2026 19:37:41 +0000
+Subject: [PATCH 05/11] Qwen3.5: Take the output head tying from the multimodal
+ config
+
+---
+ lib/bumblebee/text/qwen3_5.ex        | 18 ++++++++----------
+ test/bumblebee/text/qwen3_5_test.exs | 20 ++++++++++++++++++++
+ 2 files changed, 28 insertions(+), 10 deletions(-)
+
+diff --git a/lib/bumblebee/text/qwen3_5.ex b/lib/bumblebee/text/qwen3_5.ex
+index 90e25f5..31ff7fa 100644
+--- a/lib/bumblebee/text/qwen3_5.ex
++++ b/lib/bumblebee/text/qwen3_5.ex
+@@ -896,18 +896,16 @@ defmodule Bumblebee.Text.Qwen3_5 do
+   end
+ 
+   defimpl Bumblebee.HuggingFace.Transformers.Config do
+-    def load(spec, data) do
+-      import Shared.Converters
++    def load(spec, %{"model_type" => "qwen3_5", "text_config" => %{} = text_config} = data) do
++      # The multimodal config controls whether the output head is tied.
++      text_config =
++        Map.put(text_config, "tie_word_embeddings", Map.get(data, "tie_word_embeddings", false))
+ 
+-      # Multimodal checkpoints nest the language model configuration
+-      data =
+-        case data do
+-          %{"text_config" => text_data} ->
+-            Map.put_new(text_data, "tie_word_embeddings", data["tie_word_embeddings"])
++      load(spec, text_config)
++    end
+ 
+-          data ->
+-            data
+-        end
++    def load(spec, data) do
++      import Shared.Converters
+ 
+       # Qwen3.5 configurations set unused token ids to null
+       data =
+diff --git a/test/bumblebee/text/qwen3_5_test.exs b/test/bumblebee/text/qwen3_5_test.exs
+index e44223d..ef2db70 100644
+--- a/test/bumblebee/text/qwen3_5_test.exs
++++ b/test/bumblebee/text/qwen3_5_test.exs
+@@ -202,6 +202,26 @@ defmodule Bumblebee.Text.Qwen3_5Test do
+     assert config.eos_token_id == 248_044
+   end
+ 
++  test "uses the multimodal config to decide whether to tie output weights" do
++    for {outer, expected} <- [{%{"tie_word_embeddings" => false}, false}, {%{}, false}] do
++      data =
++        Map.merge(
++          %{
++            "model_type" => "qwen3_5",
++            "text_config" => %{
++              "model_type" => "qwen3_5_text",
++              "hidden_size" => 32,
++              "tie_word_embeddings" => true
++            }
++          },
++          outer
++        )
++
++      assert %Bumblebee.Text.Qwen3_5{hidden_size: 32, tie_word_embeddings: ^expected} =
++               Bumblebee.HuggingFace.Transformers.Config.load(%Bumblebee.Text.Qwen3_5{}, data)
++    end
++  end
++
+   test "refuses the mixture-of-experts variant" do
+     path = Path.join(System.tmp_dir!(), "bumblebee-qwen3_5-moe")
+     File.mkdir_p!(path)
+-- 
+2.56.1
+
+
+From dcdef86c7fc540bdd0c34e99a889bec50db957c1 Mon Sep 17 00:00:00 2001
+From: Victor Rodrigues <vitumail@gmail.com>
+Date: Tue, 24 Nov 2026 21:47:32 +0000
+Subject: [PATCH 06/11] Qwen3.5: Name the layer type option layer_types, as
+ other models do
+
+---
+ lib/bumblebee/text/qwen3_5.ex        | 22 +++++++++++-----------
+ test/bumblebee/text/qwen3_5_test.exs |  2 +-
+ 2 files changed, 12 insertions(+), 12 deletions(-)
+
+diff --git a/lib/bumblebee/text/qwen3_5.ex b/lib/bumblebee/text/qwen3_5.ex
+index 31ff7fa..40ba26d 100644
+--- a/lib/bumblebee/text/qwen3_5.ex
++++ b/lib/bumblebee/text/qwen3_5.ex
+@@ -30,11 +30,11 @@ defmodule Bumblebee.Text.Qwen3_5 do
+         default: 24,
+         doc: "the number of blocks in the model"
+       ],
+-      block_types: [
++      layer_types: [
+         default: nil,
+         doc: """
+-        the type of each block, either `:linear_attention` or `:full_attention`.
+-        Defaults to `:full_attention` for every fourth block and `:linear_attention`
++        the type of each layer, either `:linear_attention` or `:full_attention`.
++        Defaults to `:full_attention` for every fourth layer and `:linear_attention`
+         for the others
+         """
+       ],
+@@ -179,18 +179,18 @@ defmodule Bumblebee.Text.Qwen3_5 do
+   def config(spec, opts) do
+     spec = Shared.put_config_attrs(spec, opts)
+ 
+-    block_types =
+-      spec.block_types ||
++    layer_types =
++      spec.layer_types ||
+         for index <- 0..(spec.num_blocks - 1) do
+           if rem(index + 1, 4) == 0, do: :full_attention, else: :linear_attention
+         end
+ 
+-    if length(block_types) != spec.num_blocks do
++    if length(layer_types) != spec.num_blocks do
+       raise ArgumentError,
+-            "expected :block_types to have #{spec.num_blocks} entries, got: #{length(block_types)}"
++            "expected :layer_types to have #{spec.num_blocks} entries, got: #{length(layer_types)}"
+     end
+ 
+-    %{spec | block_types: block_types}
++    %{spec | layer_types: layer_types}
+   end
+ 
+   @impl true
+@@ -231,7 +231,7 @@ defmodule Bumblebee.Text.Qwen3_5 do
+     blocks =
+       cache.blocks
+       |> Tuple.to_list()
+-      |> Enum.zip_with(spec.block_types, fn
++      |> Enum.zip_with(spec.layer_types, fn
+         block, :full_attention -> block
+         block, :linear_attention -> %{block | self_attention: linear_attention}
+       end)
+@@ -329,7 +329,7 @@ defmodule Bumblebee.Text.Qwen3_5 do
+         normalized = rms_norm(hidden_state, spec, name: join(name, "self_attention_norm"))
+ 
+         {hidden_state, attention, self_attention_cache} =
+-          case Enum.fetch!(spec.block_types, block.index) do
++          case Enum.fetch!(spec.layer_types, block.index) do
+             :full_attention ->
+               gated_attention(normalized, position_ids, block, spec,
+                 name: join(name, "self_attention")
+@@ -920,7 +920,7 @@ defmodule Bumblebee.Text.Qwen3_5 do
+           max_positions: {"max_position_embeddings", number()},
+           hidden_size: {"hidden_size", number()},
+           num_blocks: {"num_hidden_layers", number()},
+-          block_types:
++          layer_types:
+             {"layer_types",
+              list(
+                mapping(%{
+diff --git a/test/bumblebee/text/qwen3_5_test.exs b/test/bumblebee/text/qwen3_5_test.exs
+index ef2db70..2bc2aeb 100644
+--- a/test/bumblebee/text/qwen3_5_test.exs
++++ b/test/bumblebee/text/qwen3_5_test.exs
+@@ -11,7 +11,7 @@ defmodule Bumblebee.Text.Qwen3_5Test do
+ 
+     assert %Bumblebee.Text.Qwen3_5{architecture: :base} = spec
+ 
+-    assert spec.block_types == [
++    assert spec.layer_types == [
+              :linear_attention,
+              :linear_attention,
+              :linear_attention,
+-- 
+2.56.1
+
+
+From e3d51d8fd0e9a5235c45be7c7ea3e3593fe97213 Mon Sep 17 00:00:00 2001
+From: Victor Rodrigues <vitumail@gmail.com>
+Date: Tue, 24 Nov 2026 23:15:33 +0000
+Subject: [PATCH 07/11] Qwen3.5: Solve each chunk's triangular system instead
+ of inverting it by a series
+
+---
+ lib/bumblebee/text/qwen3_5.ex        | 47 +++++++++++++---------------
+ test/bumblebee/text/qwen3_5_test.exs | 30 ++++++++++++++++++
+ 2 files changed, 51 insertions(+), 26 deletions(-)
+
+diff --git a/lib/bumblebee/text/qwen3_5.ex b/lib/bumblebee/text/qwen3_5.ex
+index 40ba26d..e081f35 100644
+--- a/lib/bumblebee/text/qwen3_5.ex
++++ b/lib/bumblebee/text/qwen3_5.ex
+@@ -732,11 +732,29 @@ defmodule Bumblebee.Text.Qwen3_5 do
+ 
+     system = Nx.dot(key_beta, [4], [0, 1, 2], key, [4], [0, 1, 2]) * pairwise_decay
+     intra_chunk = Nx.dot(query, [4], [0, 1, 2], key, [4], [0, 1, 2]) * pairwise_decay
+-    inverse = unit_lower_triangular_inverse(system)
+ 
+-    new_values = Nx.dot(inverse, [4], [0, 1, 2], value_beta, [3], [0, 1, 2])
++    strictly_lower =
++      Nx.greater(
++        Nx.iota({@chunk_size, @chunk_size}, axis: 0),
++        Nx.iota({@chunk_size, @chunk_size}, axis: 1)
++      )
++
++    unit_lower =
++      Nx.select(Nx.broadcast(strictly_lower, system), system, 0.0) + Nx.eye(@chunk_size)
++
+     decayed_key_beta = key_beta * Nx.new_axis(Nx.exp(cumulative_decay), -1)
+-    key_cumulative_decay = Nx.dot(inverse, [4], [0, 1, 2], decayed_key_beta, [3], [0, 1, 2])
++
++    solution =
++      Nx.LinAlg.triangular_solve(
++        unit_lower,
++        Nx.concatenate([value_beta, decayed_key_beta], axis: 4),
++        lower: true
++      )
++
++    new_values = Nx.slice_along_axis(solution, 0, value_head_size, axis: 4)
++
++    key_cumulative_decay =
++      Nx.slice_along_axis(solution, value_head_size, Nx.axis_size(decayed_key_beta, 4), axis: 4)
+ 
+     last_decay = Nx.slice_along_axis(cumulative_decay, @chunk_size - 1, 1, axis: 3)
+     query = query * Nx.new_axis(Nx.exp(cumulative_decay), -1)
+@@ -816,29 +834,6 @@ defmodule Bumblebee.Text.Qwen3_5 do
+     {Nx.stack(outputs, axis: 2), state}
+   end
+ 
+-  # The inverse of the identity plus the strictly lower part L of each
+-  # matrix. L is nilpotent, so the inverse is the finite series
+-  # I - L + L^2 - ..., computed as (I - L)(I + L^2)(I + L^4)...
+-  deftransformp unit_lower_triangular_inverse(system) do
+-    size = Nx.axis_size(system, -1)
+-    strictly_lower = Nx.greater(Nx.iota({size, size}, axis: 0), Nx.iota({size, size}, axis: 1))
+-    power = Nx.negate(Nx.select(Nx.broadcast(strictly_lower, system), system, 0.0))
+-    identity = Nx.eye(size)
+-    steps = ceil(:math.log2(size)) - 1
+-
+-    {inverse, _power} =
+-      Enum.reduce(1..steps, {Nx.add(identity, power), power}, fn _, {inverse, power} ->
+-        power = batched_matmul(power, power)
+-        {batched_matmul(inverse, Nx.add(identity, power)), power}
+-      end)
+-
+-    inverse
+-  end
+-
+-  deftransformp batched_matmul(left, right) do
+-    Nx.dot(left, [4], [0, 1, 2], right, [3], [0, 1, 2])
+-  end
+-
+   defnp normalize_query_key(query, key) do
+     {l2_normalize(query) / Nx.sqrt(Nx.axis_size(query, -1)), l2_normalize(key)}
+   end
+diff --git a/test/bumblebee/text/qwen3_5_test.exs b/test/bumblebee/text/qwen3_5_test.exs
+index 2bc2aeb..f39bcc8 100644
+--- a/test/bumblebee/text/qwen3_5_test.exs
++++ b/test/bumblebee/text/qwen3_5_test.exs
+@@ -171,6 +171,36 @@ defmodule Bumblebee.Text.Qwen3_5Test do
+     )
+   end
+ 
 +  test "a repeated token spanning several chunks of the linear attention" do
 +    assert {:ok, %{model: model, params: params}} =
 +             Bumblebee.load_model({:hf, "bumblebee-testing/tiny-random-Qwen3_5ForCausalLM"})
@@ -1297,68 +1860,438 @@ index 0000000..f39bcc8
 +    )
 +  end
 +
-+  test "left padding gives the same logits as unpadded inputs" do
-+    assert {:ok, %{model: model, params: params}} =
-+             Bumblebee.load_model({:hf, "bumblebee-testing/tiny-random-Qwen3_5ForCausalLM"})
+   test "left padding gives the same logits as unpadded inputs" do
+     assert {:ok, %{model: model, params: params}} =
+              Bumblebee.load_model({:hf, "bumblebee-testing/tiny-random-Qwen3_5ForCausalLM"})
+-- 
+2.56.1
+
+
+From 707acde2c23a4f6a94d1157b8450a7a43387ed0c Mon Sep 17 00:00:00 2001
+From: Victor Rodrigues <vitumail@gmail.com>
+Date: Wed, 25 Nov 2026 14:59:31 +0000
+Subject: [PATCH 08/11] Qwen3.5: Explain why the causal model lists each prefix
+
+---
+ lib/bumblebee/text/qwen3_5.ex | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/lib/bumblebee/text/qwen3_5.ex b/lib/bumblebee/text/qwen3_5.ex
+index e081f35..7b376aa 100644
+--- a/lib/bumblebee/text/qwen3_5.ex
++++ b/lib/bumblebee/text/qwen3_5.ex
+@@ -945,9 +945,11 @@ defmodule Bumblebee.Text.Qwen3_5 do
+ 
+   defimpl Bumblebee.HuggingFace.Transformers.Model do
+     def params_mapping(spec) do
+-      # Text-only, multimodal and MLX checkpoints store the language
+-      # model under different prefixes. Without a head, the prefix is
+-      # inferred on load, which also covers the unprefixed base checkpoint
++      # Text-only, multimodal and MLX checkpoints store the language model
++      # under different prefixes. The loader infers one prefix for every
++      # name in the mapping, but MLX checkpoints keep the head outside the
++      # prefix of the layers, so the causal model lists each prefix, and
++      # the base model, which has no head, relies on the inference
+       layer =
+         case spec.architecture do
+           :base ->
+-- 
+2.56.1
+
+
+From 136cde82971231a6fa99b8c5451357f0be70a3cd Mon Sep 17 00:00:00 2001
+From: Victor Rodrigues <vitumail@gmail.com>
+Date: Wed, 25 Nov 2026 15:22:30 +0000
+Subject: [PATCH 09/11] Qwen3.5: Align the embedder, layer types and names with
+ the other models
+
+---
+ lib/bumblebee/text/qwen3_5.ex | 62 +++++++++++++++++++----------------
+ 1 file changed, 34 insertions(+), 28 deletions(-)
+
+diff --git a/lib/bumblebee/text/qwen3_5.ex b/lib/bumblebee/text/qwen3_5.ex
+index 7b376aa..68c6c19 100644
+--- a/lib/bumblebee/text/qwen3_5.ex
++++ b/lib/bumblebee/text/qwen3_5.ex
+@@ -177,20 +177,7 @@ defmodule Bumblebee.Text.Qwen3_5 do
+ 
+   @impl true
+   def config(spec, opts) do
+-    spec = Shared.put_config_attrs(spec, opts)
+-
+-    layer_types =
+-      spec.layer_types ||
+-        for index <- 0..(spec.num_blocks - 1) do
+-          if rem(index + 1, 4) == 0, do: :full_attention, else: :linear_attention
+-        end
+-
+-    if length(layer_types) != spec.num_blocks do
+-      raise ArgumentError,
+-            "expected :layer_types to have #{spec.num_blocks} entries, got: #{length(layer_types)}"
+-    end
+-
+-    %{spec | layer_types: layer_types}
++    Shared.put_config_attrs(spec, opts)
+   end
+ 
+   @impl true
+@@ -231,7 +218,7 @@ defmodule Bumblebee.Text.Qwen3_5 do
+     blocks =
+       cache.blocks
+       |> Tuple.to_list()
+-      |> Enum.zip_with(spec.layer_types, fn
++      |> Enum.zip_with(layer_types(spec), fn
+         block, :full_attention -> block
+         block, :linear_attention -> %{block | self_attention: linear_attention}
+       end)
+@@ -278,12 +265,12 @@ defmodule Bumblebee.Text.Qwen3_5 do
+ 
+   defp core(inputs, spec) do
+     embeddings =
+-      Layers.default inputs["input_embeddings"] do
+-        Axon.embedding(inputs["input_ids"], spec.vocab_size, spec.hidden_size,
+-          kernel_initializer: kernel_initializer(spec),
+-          name: "embedder.token_embedding"
+-        )
+-      end
++      embedder(
++        inputs["input_ids"],
++        inputs["input_embeddings"],
++        spec,
++        name: "embedder"
++      )
+ 
+     position_ids =
+       Layers.default inputs["position_ids"] do
+@@ -310,8 +297,20 @@ defmodule Bumblebee.Text.Qwen3_5 do
+     }
+   end
+ 
++  defp embedder(input_ids, input_embeddings, spec, opts) do
++    name = opts[:name]
 +
-+    unpadded =
-+      Axon.predict(model, params, %{
-+        "input_ids" => Nx.tensor([[10, 20, 30, 40, 50, 60]])
-+      })
-+
-+    # Position ids skip the padding, as in generation
-+    padded =
-+      Axon.predict(model, params, %{
-+        "input_ids" => Nx.tensor([[0, 0, 10, 20, 30, 40, 50, 60]]),
-+        "attention_mask" => Nx.tensor([[0, 0, 1, 1, 1, 1, 1, 1]]),
-+        "position_ids" => Nx.tensor([[0, 0, 0, 1, 2, 3, 4, 5]])
-+      })
-+
-+    assert_all_close(padded.logits[[.., 2..-1//1]], unpadded.logits, atol: 1.0e-5)
-+  end
-+
-+  test "loads generation attributes from the text configuration" do
-+    # Multimodal checkpoints without generation_config.json keep the
-+    # token ids in the nested text configuration
-+    data = %{"model_type" => "qwen3_5", "text_config" => %{"eos_token_id" => 248_044}}
-+
-+    config =
-+      Bumblebee.HuggingFace.Transformers.Config.load(%Bumblebee.Text.GenerationConfig{}, data)
-+
-+    assert config.eos_token_id == 248_044
-+  end
-+
-+  test "uses the multimodal config to decide whether to tie output weights" do
-+    for {outer, expected} <- [{%{"tie_word_embeddings" => false}, false}, {%{}, false}] do
-+      data =
-+        Map.merge(
-+          %{
-+            "model_type" => "qwen3_5",
-+            "text_config" => %{
-+              "model_type" => "qwen3_5_text",
-+              "hidden_size" => 32,
-+              "tie_word_embeddings" => true
-+            }
-+          },
-+          outer
-+        )
-+
-+      assert %Bumblebee.Text.Qwen3_5{hidden_size: 32, tie_word_embeddings: ^expected} =
-+               Bumblebee.HuggingFace.Transformers.Config.load(%Bumblebee.Text.Qwen3_5{}, data)
++    Layers.default input_embeddings do
++      Axon.embedding(input_ids, spec.vocab_size, spec.hidden_size,
++        kernel_initializer: kernel_initializer(spec),
++        name: join(name, "token_embedding")
++      )
 +    end
 +  end
 +
-+  test "refuses the mixture-of-experts variant" do
-+    path = Path.join(System.tmp_dir!(), "bumblebee-qwen3_5-moe")
-+    File.mkdir_p!(path)
-+
-+    File.write!(
-+      Path.join(path, "config.json"),
-+      ~s({"architectures": ["Qwen3_5MoeForConditionalGeneration"], "model_type": "qwen3_5_moe"})
-+    )
-+
-+    assert_raise ArgumentError, ~r/"Qwen3_5MoeForConditionalGeneration"/, fn ->
-+      Bumblebee.load_spec({:local, path})
-+    end
+   defp decoder(hidden_state, position_ids, attention_mask, cache, spec, opts) do
+     name = opts[:name]
++    layer_types = layer_types(spec)
+ 
+     Layers.Transformer.blocks(
+       hidden_state,
+@@ -329,7 +328,7 @@ defmodule Bumblebee.Text.Qwen3_5 do
+         normalized = rms_norm(hidden_state, spec, name: join(name, "self_attention_norm"))
+ 
+         {hidden_state, attention, self_attention_cache} =
+-          case Enum.fetch!(spec.layer_types, block.index) do
++          case Enum.at(layer_types, block.index) do
+             :full_attention ->
+               gated_attention(normalized, position_ids, block, spec,
+                 name: join(name, "self_attention")
+@@ -838,12 +837,12 @@ defmodule Bumblebee.Text.Qwen3_5 do
+     {l2_normalize(query) / Nx.sqrt(Nx.axis_size(query, -1)), l2_normalize(key)}
+   end
+ 
+-  defnp delta_step(q, k, v, b, d, state) do
+-    state = state * (d |> Nx.exp() |> Nx.new_axis(-1) |> Nx.new_axis(-1))
+-    memory = Nx.sum(state * Nx.new_axis(k, -1), axes: [2])
+-    delta = (v - memory) * Nx.new_axis(b, -1)
+-    state = state + Nx.new_axis(k, -1) * Nx.new_axis(delta, 2)
+-    {Nx.sum(state * Nx.new_axis(q, -1), axes: [2]), state}
++  defnp delta_step(query, key, value, beta, decay, state) do
++    state = state * (decay |> Nx.exp() |> Nx.new_axis(-1) |> Nx.new_axis(-1))
++    memory = Nx.sum(state * Nx.new_axis(key, -1), axes: [2])
++    delta = (value - memory) * Nx.new_axis(beta, -1)
++    state = state + Nx.new_axis(key, -1) * Nx.new_axis(delta, 2)
++    {Nx.sum(state * Nx.new_axis(query, -1), axes: [2]), state}
+   end
+ 
+   defnp l2_normalize(x) do
+@@ -881,6 +880,13 @@ defmodule Bumblebee.Text.Qwen3_5 do
+     )
+   end
+ 
++  defp layer_types(spec) do
++    spec.layer_types ||
++      for index <- 0..(spec.num_blocks - 1) do
++        if rem(index + 1, 4) == 0, do: :full_attention, else: :linear_attention
++      end
 +  end
-+end
++
+   defp linear_attention_conv_size(spec) do
+     2 * spec.linear_attention_num_key_heads * spec.linear_attention_key_head_size +
+       spec.linear_attention_num_value_heads * spec.linear_attention_value_head_size
+-- 
+2.56.1
+
+
+From 5d821db4e8f8101a79dcad7fd4e5775aa38d7d71 Mon Sep 17 00:00:00 2001
+From: Victor Rodrigues <vitumail@gmail.com>
+Date: Thu, 26 Nov 2026 13:09:35 +0000
+Subject: [PATCH 10/11] Qwen3.5: Default the options to Qwen3_5TextConfig's
+ values
+
+---
+ lib/bumblebee/text/qwen3_5.ex | 18 +++++++++---------
+ 1 file changed, 9 insertions(+), 9 deletions(-)
+
+diff --git a/lib/bumblebee/text/qwen3_5.ex b/lib/bumblebee/text/qwen3_5.ex
+index 68c6c19..6c4f83b 100644
+--- a/lib/bumblebee/text/qwen3_5.ex
++++ b/lib/bumblebee/text/qwen3_5.ex
+@@ -11,7 +11,7 @@ defmodule Bumblebee.Text.Qwen3_5 do
+         """
+       ],
+       max_positions: [
+-        default: 262_144,
++        default: 32_768,
+         doc: """
+         the vocabulary size of the position embedding. This corresponds to the maximum sequence
+         length that this model can process. Typically this is set to a large value just in case,
+@@ -19,15 +19,15 @@ defmodule Bumblebee.Text.Qwen3_5 do
+         """
+       ],
+       hidden_size: [
+-        default: 1024,
++        default: 4096,
+         doc: "the dimensionality of hidden layers"
+       ],
+       intermediate_size: [
+-        default: 3584,
++        default: 12_288,
+         doc: "the dimensionality of intermediate layers"
+       ],
+       num_blocks: [
+-        default: 24,
++        default: 32,
+         doc: "the number of blocks in the model"
+       ],
+       layer_types: [
+@@ -39,11 +39,11 @@ defmodule Bumblebee.Text.Qwen3_5 do
+         """
+       ],
+       num_attention_heads: [
+-        default: 8,
++        default: 16,
+         doc: "the number of attention heads in the full attention blocks"
+       ],
+       num_key_value_heads: [
+-        default: 2,
++        default: 4,
+         doc: "the number of key value heads in the full attention blocks"
+       ],
+       attention_head_size: [
+@@ -56,7 +56,7 @@ defmodule Bumblebee.Text.Qwen3_5 do
+         doc: "the number of query and key heads in the linear attention blocks"
+       ],
+       linear_attention_num_value_heads: [
+-        default: 16,
++        default: 32,
+         doc: "the number of value heads in the linear attention blocks"
+       ],
+       linear_attention_key_head_size: [
+@@ -76,7 +76,7 @@ defmodule Bumblebee.Text.Qwen3_5 do
+         doc: "the activation function"
+       ],
+       rotary_embedding_base: [
+-        default: 10_000_000,
++        default: 10_000,
+         doc: "base for computing rotary embedding frequency"
+       ],
+       rotary_embedding_percentage: [
+@@ -93,7 +93,7 @@ defmodule Bumblebee.Text.Qwen3_5 do
+           "the standard deviation of the normal initializer used for initializing kernel parameters"
+       ],
+       tie_word_embeddings: [
+-        default: true,
++        default: false,
+         doc: "whether to tie input and output embedding weights"
+       ]
+     ] ++
+-- 
+2.56.1
+
+
+From b3a78dd818ae278221486bef63d13b5fa54c2ca4 Mon Sep 17 00:00:00 2001
+From: Victor Rodrigues <vitumail@gmail.com>
+Date: Thu, 26 Nov 2026 13:09:35 +0000
+Subject: [PATCH 11/11] Qwen3.5: Map only the layouts transformers writes
+
+---
+ lib/bumblebee/text/qwen3_5.ex        | 103 ++++++++-------------------
+ test/bumblebee/text/qwen3_5_test.exs |  27 -------
+ 2 files changed, 29 insertions(+), 101 deletions(-)
+
+diff --git a/lib/bumblebee/text/qwen3_5.ex b/lib/bumblebee/text/qwen3_5.ex
+index 6c4f83b..4d33e3b 100644
+--- a/lib/bumblebee/text/qwen3_5.ex
++++ b/lib/bumblebee/text/qwen3_5.ex
+@@ -951,93 +951,48 @@ defmodule Bumblebee.Text.Qwen3_5 do
+ 
+   defimpl Bumblebee.HuggingFace.Transformers.Model do
+     def params_mapping(spec) do
+-      # Text-only, multimodal and MLX checkpoints store the language model
+-      # under different prefixes. The loader infers one prefix for every
+-      # name in the mapping, but MLX checkpoints keep the head outside the
+-      # prefix of the layers, so the causal model lists each prefix, and
+-      # the base model, which has no head, relies on the inference
+-      layer =
+-        case spec.architecture do
+-          :base ->
+-            fn name -> [name] end
+-
+-          :for_causal_language_modeling ->
+-            fn name ->
+-              [
+-                "model." <> name,
+-                "model.language_model." <> name,
+-                "language_model.model." <> name
+-              ]
+-            end
+-        end
+-
+-      # MLX checkpoints store these norm weights with the shift of 1
+-      # added, and the convolution kernel as {channels, kernel_size, 1}
+-      # instead of {channels, 1, kernel_size}. As in mlx-lm, the kernel
+-      # layout tells the two apart
+-      norm = fn name ->
+-        %{
+-          "weight" =>
+-            {[
+-               param_refs(layer.(name), "weight"),
+-               param_refs(layer.("layers.0.linear_attn.conv1d"), "weight")
+-             ],
+-             fn [weight, conv_kernel] ->
+-               if Nx.axis_size(conv_kernel, -1) == 1, do: Nx.subtract(weight, 1), else: weight
+-             end}
+-        }
+-      end
+-
+-      mapping = %{
+-        "embedder.token_embedding" => layer.("embed_tokens"),
+-        "decoder.blocks.{n}.self_attention_norm" => norm.("layers.{n}.input_layernorm"),
+-        "decoder.blocks.{n}.self_attention.query" => layer.("layers.{n}.self_attn.q_proj"),
+-        "decoder.blocks.{n}.self_attention.key" => layer.("layers.{n}.self_attn.k_proj"),
+-        "decoder.blocks.{n}.self_attention.value" => layer.("layers.{n}.self_attn.v_proj"),
+-        "decoder.blocks.{n}.self_attention.output" => layer.("layers.{n}.self_attn.o_proj"),
+-        "decoder.blocks.{n}.self_attention.query_norm" => norm.("layers.{n}.self_attn.q_norm"),
+-        "decoder.blocks.{n}.self_attention.key_norm" => norm.("layers.{n}.self_attn.k_norm"),
++      %{
++        "embedder.token_embedding" => "embed_tokens",
++        "decoder.blocks.{n}.self_attention_norm" => "layers.{n}.input_layernorm",
++        "decoder.blocks.{n}.self_attention.query" => "layers.{n}.self_attn.q_proj",
++        "decoder.blocks.{n}.self_attention.key" => "layers.{n}.self_attn.k_proj",
++        "decoder.blocks.{n}.self_attention.value" => "layers.{n}.self_attn.v_proj",
++        "decoder.blocks.{n}.self_attention.output" => "layers.{n}.self_attn.o_proj",
++        "decoder.blocks.{n}.self_attention.query_norm" => "layers.{n}.self_attn.q_norm",
++        "decoder.blocks.{n}.self_attention.key_norm" => "layers.{n}.self_attn.k_norm",
+         "decoder.blocks.{n}.linear_attention.query_key_value" =>
+-          layer.("layers.{n}.linear_attn.in_proj_qkv"),
+-        "decoder.blocks.{n}.linear_attention.output_gate" =>
+-          layer.("layers.{n}.linear_attn.in_proj_z"),
+-        "decoder.blocks.{n}.linear_attention.beta" => layer.("layers.{n}.linear_attn.in_proj_b"),
+-        "decoder.blocks.{n}.linear_attention.decay" => layer.("layers.{n}.linear_attn.in_proj_a"),
++          "layers.{n}.linear_attn.in_proj_qkv",
++        "decoder.blocks.{n}.linear_attention.output_gate" => "layers.{n}.linear_attn.in_proj_z",
++        "decoder.blocks.{n}.linear_attention.beta" => "layers.{n}.linear_attn.in_proj_b",
++        "decoder.blocks.{n}.linear_attention.decay" => "layers.{n}.linear_attn.in_proj_a",
+         "decoder.blocks.{n}.linear_attention.conv" => %{
+           "kernel" =>
+-            {[param_refs(layer.("layers.{n}.linear_attn.conv1d"), "weight")],
++            {[{"layers.{n}.linear_attn.conv1d", "weight"}],
+              fn [kernel] ->
+                {channels, _, _} = Nx.shape(kernel)
+                Nx.reshape(kernel, {channels, :auto})
+              end}
+         },
+         "decoder.blocks.{n}.linear_attention.delta_rule" => %{
+-          "a_log" => {[param_refs(layer.("layers.{n}.linear_attn"), "A_log")], fn [x] -> x end},
+-          "dt_bias" =>
+-            {[param_refs(layer.("layers.{n}.linear_attn"), "dt_bias")], fn [x] -> x end}
++          "a_log" => {[{"layers.{n}.linear_attn", "A_log"}], fn [x] -> x end},
++          "dt_bias" => {[{"layers.{n}.linear_attn", "dt_bias"}], fn [x] -> x end}
+         },
+-        "decoder.blocks.{n}.linear_attention.norm" => layer.("layers.{n}.linear_attn.norm"),
+-        "decoder.blocks.{n}.linear_attention.output" => layer.("layers.{n}.linear_attn.out_proj"),
+-        "decoder.blocks.{n}.ffn.gate" => layer.("layers.{n}.mlp.gate_proj"),
+-        "decoder.blocks.{n}.ffn.intermediate" => layer.("layers.{n}.mlp.up_proj"),
+-        "decoder.blocks.{n}.ffn.output" => layer.("layers.{n}.mlp.down_proj"),
+-        "decoder.blocks.{n}.output_norm" => norm.("layers.{n}.post_attention_layernorm"),
+-        "output_norm" => norm.("norm"),
+-        "language_modeling_head.output" =>
+-          if(spec.tie_word_embeddings,
+-            do: layer.("embed_tokens"),
+-            else: ["lm_head", "language_model.lm_head"]
+-          )
++        "decoder.blocks.{n}.linear_attention.norm" => "layers.{n}.linear_attn.norm",
++        "decoder.blocks.{n}.linear_attention.output" => "layers.{n}.linear_attn.out_proj",
++        "decoder.blocks.{n}.ffn.gate" => "layers.{n}.mlp.gate_proj",
++        "decoder.blocks.{n}.ffn.intermediate" => "layers.{n}.mlp.up_proj",
++        "decoder.blocks.{n}.ffn.output" => "layers.{n}.mlp.down_proj",
++        "decoder.blocks.{n}.output_norm" => "layers.{n}.post_attention_layernorm",
++        "output_norm" => "norm",
++        "language_modeling_head.output" => language_modeling_head_source(spec.tie_word_embeddings)
+       }
+-
+-      case spec.architecture do
+-        :base -> Map.delete(mapping, "language_modeling_head.output")
+-        :for_causal_language_modeling -> mapping
+-      end
+     end
+ 
+-    defp param_refs(layer_names, param_name) do
+-      for layer_name <- layer_names, do: {layer_name, param_name}
++    defp language_modeling_head_source(true), do: "embed_tokens"
++
++    defp language_modeling_head_source(false) do
++      # Give the full parameter name so the loader can find it at the root.
++      %{"kernel" => {[{"lm_head", "lm_head.weight"}], fn [weight] -> weight end}}
+     end
+   end
+ end
+diff --git a/test/bumblebee/text/qwen3_5_test.exs b/test/bumblebee/text/qwen3_5_test.exs
+index f39bcc8..74760dc 100644
+--- a/test/bumblebee/text/qwen3_5_test.exs
++++ b/test/bumblebee/text/qwen3_5_test.exs
+@@ -85,33 +85,6 @@ defmodule Bumblebee.Text.Qwen3_5Test do
+     )
+   end
+ 
+-  test ":for_causal_language_modeling from an MLX checkpoint" do
+-    # The same weights as the multimodal checkpoint, converted with mlx-lm,
+-    # which renames them, moves the convolution kernel axis and adds the
+-    # norm shift to the weights
+-    assert {:ok, %{model: model, params: params, spec: spec}} =
+-             Bumblebee.load_model(
+-               {:hf, "bumblebee-testing/tiny-random-Qwen3_5ForConditionalGeneration-mlx"}
+-             )
+-
+-    assert %Bumblebee.Text.Qwen3_5{architecture: :for_causal_language_modeling} = spec
+-
+-    inputs = %{
+-      "input_ids" => Nx.tensor([[10, 20, 30, 40, 50, 60, 70, 80, 0, 0]]),
+-      "attention_mask" => Nx.tensor([[1, 1, 1, 1, 1, 1, 1, 1, 0, 0]])
+-    }
+-
+-    outputs = Axon.predict(model, params, inputs)
+-
+-    assert_all_close(
+-      outputs.logits[[.., 1..3, 1..3]],
+-      Nx.tensor([
+-        [[0.7326, 1.1803, 0.4093], [1.0902, 0.5977, 0.2788], [-0.6475, 0.8144, 0.5186]]
+-      ]),
+-      atol: 1.0e-4
+-    )
+-  end
+-
+   test "generation with cache" do
+     repo = {:hf, "bumblebee-testing/tiny-random-Qwen3_5ForCausalLM"}
+     assert {:ok, %{model: model, params: params, spec: spec}} = Bumblebee.load_model(repo)
+-- 
+2.56.1
+

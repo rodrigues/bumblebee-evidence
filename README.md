@@ -12,6 +12,7 @@ All runs were on macOS (Apple M5 Pro, 64 GiB), with Elixir 1.20.5 and OTP 29.1.2
 
 [`reference.py`](bumblebee/reference.py) builds three tiny random checkpoints in [`checkpoints/`](bumblebee/checkpoints) with transformers 5.23.0 and records their outputs in [`reference.json`](bumblebee/outputs/reference.json).
 [`tiny_mlx.py`](bumblebee/tiny_mlx.py) converts the multimodal one to MLX's layout with mlx-lm 0.32.2, unquantized, and records mlx-lm's outputs in [`tiny-mlx-reference.json`](bumblebee/outputs/tiny-mlx-reference.json).
+Loading MLX's layout is not part of the `qwen3-5` branch: the test for it is on `qwen3-8-mlx`, with the rest of the MLX support.
 
 | Checkpoint | Covers |
 |---|---|
