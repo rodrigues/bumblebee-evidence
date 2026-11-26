@@ -1,2 +1,2 @@
-Finished in 6.2 seconds (1.8s async, 4.4s sync)
+Finished in 6.5 seconds (1.9s async, 4.6s sync)
 Result: 13 passed
