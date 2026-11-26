@@ -1,4 +1,4 @@
-From 98fd8de5c04b4afc16ce4a8b8ca7b44cacdb3ce1 Mon Sep 17 00:00:00 2001
+From 146196c6f20c296d477e655fb301f1b912f8fc0f Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Wed, 25 Nov 2026 01:46:50 +0000
 Subject: [PATCH 1/7] Add Llama 4
@@ -975,7 +975,7 @@ index 0000000..20d8330
 2.56.1
 
 
-From 2f6b14287b74d958a478ff27dcee48d2092388c1 Mon Sep 17 00:00:00 2001
+From 026894145209700f0be4fb0e30ffb39223835d29 Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Wed, 25 Nov 2026 11:47:17 +0000
 Subject: [PATCH 2/7] Llama 4: Attend to the whole sequence when the chunk size
@@ -1054,7 +1054,7 @@ index 20d8330..f921597 100644
 2.56.1
 
 
-From 19873420154c992b2d337e0922f4c48a7af639df Mon Sep 17 00:00:00 2001
+From 415c9ebcb4bd7c71599da637d90460bc9d1ed2f9 Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Wed, 25 Nov 2026 14:36:33 +0000
 Subject: [PATCH 3/7] Llama 4: Let the loader infer the multimodal prefix
@@ -1108,7 +1108,7 @@ index 3251c69..661bc5e 100644
 2.56.1
 
 
-From 69e0b14272a7c8f4f2d4e4ffde4cd06c7d4943ca Mon Sep 17 00:00:00 2001
+From 9a58bb9ed7985dd881503ea9c25936ee5be71f6b Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Wed, 25 Nov 2026 15:23:36 +0000
 Subject: [PATCH 4/7] Llama 4: Add the embedder and write the layer
@@ -1228,7 +1228,7 @@ index 661bc5e..4ee9e51 100644
 2.56.1
 
 
-From ef8558feb62ca87dca00b20e14f6e042adaea46d Mon Sep 17 00:00:00 2001
+From 371756754cb4f5619234ad412bea4d5e30fea59d Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Thu, 26 Nov 2026 13:26:30 +0000
 Subject: [PATCH 5/7] Llama 4: Compute the query temperature from the integer
@@ -1302,7 +1302,7 @@ index f921597..4c1cb0c 100644
 2.56.1
 
 
-From 5e52fba0ba0aff64d71af7aa2b8188e3c5f86319 Mon Sep 17 00:00:00 2001
+From 7f65ee143a00be3ea8415f8402da3d5de4b8a6f3 Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Thu, 26 Nov 2026 13:26:54 +0000
 Subject: [PATCH 6/7] Llama 4: List the module in the docs and its
@@ -1353,7 +1353,7 @@ index 44e1f9c..8d85b21 100644
 2.56.1
 
 
-From ec91c3b5e99f5a7d94755e2d10e700b0403cf5e2 Mon Sep 17 00:00:00 2001
+From 0200a83fb547a88a382e9566614f6cdd0dac4805 Mon Sep 17 00:00:00 2001
 From: Victor Rodrigues <vitumail@gmail.com>
 Date: Thu, 26 Nov 2026 13:33:37 +0000
 Subject: [PATCH 7/7] Llama 4: State only what the float16 temperature test
