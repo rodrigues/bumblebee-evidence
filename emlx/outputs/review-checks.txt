@@ -1,0 +1,33 @@
+# review_checks.exs on the GPU with MLX_ENABLE_TF32=0, 2026-11-26
+
+## EMLX 808d3ce, main
+Result type of a product with a quantized weight
+  activation {:f, 32}, scales {:f, 32}: Nx expects {:f, 32}, eager {:f, 32}, compiled {:f, 32}
+  activation {:f, 16}, scales {:f, 32}: Nx expects {:f, 16}, eager raises RuntimeError: type mismatch in EMLX: expected {:f, 16}, got: {:f, 32}. Please report this bug, compiled raises RuntimeError: type mismatch in EMLX: expected {:f, 16}, got: {:f, 32}. Please report this bug
+  activation {:f, 16}, scales {:bf, 16}: Nx expects {:f, 16}, eager raises RuntimeError: type mismatch in EMLX: expected {:f, 16}, got: {:f, 32}. Please report this bug, compiled raises RuntimeError: type mismatch in EMLX: expected {:f, 16}, got: {:f, 32}. Please report this bug
+  activation {:bf, 16}, scales {:bf, 16}: Nx expects {:bf, 16}, eager {:bf, 16}, compiled {:bf, 16}
+  activation {:bf, 16}, scales {:f, 32}: Nx expects {:bf, 16}, eager raises RuntimeError: type mismatch in EMLX: expected {:bf, 16}, got: {:f, 32}. Please report this bug, compiled raises RuntimeError: type mismatch in EMLX: expected {:bf, 16}, got: {:f, 32}. Please report this bug
+Transposed square quantized weight, 64x64 sin
+  transposing raises ArgumentError: Shape mismatch in MLX array conversion:
+
+## EMLX 25db4b8, the branch before the guard
+Result type of a product with a quantized weight
+  activation {:f, 32}, scales {:f, 32}: Nx expects {:f, 32}, eager {:f, 32}, compiled {:f, 32}
+  activation {:f, 16}, scales {:f, 32}: Nx expects {:f, 16}, eager {:f, 16}, compiled {:f, 16}
+  activation {:f, 16}, scales {:bf, 16}: Nx expects {:f, 16}, eager {:f, 16}, compiled {:f, 16}
+  activation {:bf, 16}, scales {:bf, 16}: Nx expects {:bf, 16}, eager {:bf, 16}, compiled {:bf, 16}
+  activation {:bf, 16}, scales {:f, 32}: Nx expects {:bf, 16}, eager {:bf, 16}, compiled {:bf, 16}
+Transposed square quantized weight, 64x64 sin
+  first axis: eager max abs difference from the dense product 5.841255187988281e-6; compiled max abs difference from the dense product 5.841255187988281e-6
+  last axis: eager max abs difference from the dense product 2.722897529602051; compiled max abs difference from the dense product 2.722897529602051
+
+## EMLX 61a1f79, the branch
+Result type of a product with a quantized weight
+  activation {:f, 32}, scales {:f, 32}: Nx expects {:f, 32}, eager {:f, 32}, compiled {:f, 32}
+  activation {:f, 16}, scales {:f, 32}: Nx expects {:f, 16}, eager {:f, 16}, compiled {:f, 16}
+  activation {:f, 16}, scales {:bf, 16}: Nx expects {:f, 16}, eager {:f, 16}, compiled {:f, 16}
+  activation {:bf, 16}, scales {:bf, 16}: Nx expects {:bf, 16}, eager {:bf, 16}, compiled {:bf, 16}
+  activation {:bf, 16}, scales {:f, 32}: Nx expects {:bf, 16}, eager {:bf, 16}, compiled {:bf, 16}
+Transposed square quantized weight, 64x64 sin
+  first axis: eager max abs difference from the dense product 5.841255187988281e-6; compiled max abs difference from the dense product 5.841255187988281e-6
+  last axis: eager raises ArgumentError: a quantized tensor whose transpose flag is true can be contracted only on its first axis, got axes [1]; compiled raises ArgumentError: a quantized tensor whose transpose flag is true can be contracted only on its first axis, got axes [1]

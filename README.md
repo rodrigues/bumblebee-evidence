@@ -68,6 +68,11 @@ Bumblebee uses about 2 GB more than mlx-lm because it dequantizes the embedding 
 The EMLX quantization tests pass ([`quantization-tests.txt`](emlx/outputs/quantization-tests.txt)), and so do the Bumblebee tests, run against the local checkpoints on branch `qwen3-8-mlx`, which also has Qwen3.5 ([`tests.sh`](bumblebee/tests.sh), [`tests.txt`](bumblebee/outputs/tests.txt)).
 The full EMLX suite at `61a1f79`, on the GPU with MLX_ENABLE_TF32=0, passes: 2,756 tests and doctests, with the 7 tagged as excluded by default left out ([`suite-61a1f79.txt`](emlx/outputs/suite-61a1f79.txt)).
 
+[`review_checks.exs`](emlx/review_checks.exs) checks two findings of the review on main, on `25db4b8` before the guard, and on `61a1f79` ([`review-checks.txt`](emlx/outputs/review-checks.txt)):
+
+- The result type of a product with a quantized weight, for five pairs of activation and scale types: on main, eager and compiled products raise "type mismatch in EMLX" for float16 activations with float32 or bfloat16 scales and for bfloat16 activations with float32 scales; on the branch every pair gives the type Nx expects.
+- A transposed 64x64 quantized weight contracted on its last axis: before the guard the result differs from the dense product by up to 2.72 without an error, and at `61a1f79` it raises; on its first axis it is within 5.8e-6 of the dense product. On main the transpose itself raises.
+
 ## Not checked
 
 - Quantization modes other than affine, which Bumblebee refuses on load.
@@ -91,6 +96,7 @@ BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir precision.ex
 uv run reference_27b.py
 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir bumblebee_27b.exs
 BUMBLEBEE_PATH=path/to/bumblebee EMLX_PATH=path/to/emlx/emlx elixir params_27b.exs
+EMLX_PATH=path/to/emlx/emlx elixir ../emlx/review_checks.exs
 ```
 
 The Elixir scripts need macOS on Apple silicon for EMLX, and the bfloat16 checkpoint needs about 10 GB of memory.
