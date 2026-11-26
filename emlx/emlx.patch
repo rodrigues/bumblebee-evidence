@@ -1,8 +1,8 @@
 diff --git a/emlx/lib/emlx.ex b/emlx/lib/emlx.ex
-index 5b873f2..2e908d8 100644
+index 23e24a8..6f02a4e 100644
 --- a/emlx/lib/emlx.ex
 +++ b/emlx/lib/emlx.ex
-@@ -1339,15 +1339,18 @@ defmodule EMLX do
+@@ -1338,15 +1338,18 @@ defmodule EMLX do
        when not is_nil(cfg) do
      biases_ref = cfg.biases && EMLX.Backend.from_nx(cfg.biases)
  
@@ -31,10 +31,10 @@ index 5b873f2..2e908d8 100644
  
    @doc """
 diff --git a/emlx/lib/emlx/backend.ex b/emlx/lib/emlx/backend.ex
-index f647092..de92367 100644
+index 6a9c289..3b13492 100644
 --- a/emlx/lib/emlx/backend.ex
 +++ b/emlx/lib/emlx/backend.ex
-@@ -520,6 +520,27 @@ defmodule EMLX.Backend do
+@@ -520,6 +520,22 @@ defmodule EMLX.Backend do
    end
  
    @impl true
@@ -44,12 +44,7 @@ index f647092..de92367 100644
 +        [1, 0]
 +      ) do
 +    # Only the logical shape swaps; the flag tells quantized_matmul how to read the packed data
-+    transpose =
-+      case cfg.transpose do
-+        nil -> true
-+        true -> nil
-+      end
-+
++    transpose = if cfg.transpose, do: nil, else: true
 +    %{out | data: %{tensor.data | quantization_config: %{cfg | transpose: transpose}}}
 +  end
 +
@@ -62,37 +57,91 @@ index f647092..de92367 100644
    def transpose(out, tensor, axes) do
      tensor
      |> from_nx()
-@@ -1262,6 +1283,9 @@ defmodule EMLX.Backend do
+@@ -1237,6 +1253,14 @@ defmodule EMLX.Backend do
+     weight_rank = tuple_size(qw_tensor.shape)
+     last_dim = weight_rank - 1
+ 
++    if cfg.transpose == true and right_axes != [0] do
++      axes = inspect(right_axes)
++
++      raise ArgumentError,
++            "a quantized tensor whose transpose flag is true can be contracted only on its first axis, " <>
++              "got axes #{axes}"
++    end
++
+     # If cfg.transpose was explicitly set (e.g. by QuantizeParams when weights are stored
+     # in {out,in} physical layout but exposed as {in,out} to Axon), use it; otherwise
+     # auto-detect from right_axes.
+@@ -1262,6 +1286,9 @@ defmodule EMLX.Backend do
          mode
        )
  
-+    # mx::quantized_matmul promotes the activation's dtype with the scales'
++    # mx::quantized_matmul can return a wider type than the activation's
 +    result = EMLX.astype(result, to_mlx_type(out.type))
 +
      to_nx(result, out)
    end
  
 diff --git a/emlx/lib/emlx/native/expr.ex b/emlx/lib/emlx/native/expr.ex
-index 9fd6401..6fc4bf9 100644
+index 7d8b235..374fe2a 100644
 --- a/emlx/lib/emlx/native/expr.ex
 +++ b/emlx/lib/emlx/native/expr.ex
-@@ -2438,8 +2438,9 @@ defmodule EMLX.Native.Expr do
+@@ -2408,6 +2408,14 @@ defmodule EMLX.Native.Expr do
+ 
+     last_dim = tuple_size(right.shape) - 1
+ 
++    if cfg.transpose == true and c_right != [0] do
++      axes = inspect(c_right)
++
++      raise ArgumentError,
++            "a quantized tensor whose transpose flag is true can be contracted only on its first axis, " <>
++              "got axes #{axes}"
++    end
++
+     transpose =
+       case cfg.transpose do
+         nil -> c_right == [last_dim]
+@@ -2438,8 +2446,8 @@ defmodule EMLX.Native.Expr do
        | instructions: [{qmm_ref, :quantized_matmul, operands, attrs} | state.instructions]
      }
  
 -    # mx::quantized_matmul returns the activation's dtype (matching the eager
 -    {result_ref, state} = emit_cast_if_needed(qmm_ref, left.type, out_type, state)
-+    # mx::quantized_matmul promotes the activation's dtype with the scales'
-+    result_type = Nx.Type.merge(left.type, cfg.scales.type)
-+    {result_ref, state} = emit_cast_if_needed(qmm_ref, result_type, out_type, state)
++    # mx::quantized_matmul can return a wider type than the activation's
++    {result_ref, state} = emit_cast_to(qmm_ref, out_type, state)
      %{state | node_to_ref: Map.put(state.node_to_ref, id, result_ref)}
    end
  
 diff --git a/emlx/test/emlx/backend_quantization_test.exs b/emlx/test/emlx/backend_quantization_test.exs
-index ec7b796..55bd720 100644
+index ec7b796..a1a6103 100644
 --- a/emlx/test/emlx/backend_quantization_test.exs
 +++ b/emlx/test/emlx/backend_quantization_test.exs
-@@ -159,4 +159,79 @@ defmodule EMLX.BackendQuantizationTest do
+@@ -101,6 +101,24 @@ defmodule EMLX.BackendQuantizationTest do
+         Nx.dot(qw, [1], input, [0])
+       end
+     end
++
++    for scales_type <- [{:f, 32}, {:bf, 16}] do
++      test "a compiled dot casts to the activation type with #{inspect(scales_type)} scales" do
++        input = Nx.iota({1, 4, 128}, type: :f16) |> Nx.divide(100)
++        input = Nx.backend_transfer(input, {EMLX.Backend, device: :gpu})
++
++        weight = Nx.iota({64, 128}, type: unquote(scales_type)) |> Nx.sin()
++        weight = Nx.backend_transfer(weight, {EMLX.Backend, device: :gpu})
++        qw = EMLX.quantize(weight, [])
++        assert Nx.type(qw.data.quantization_config.scales) == unquote(scales_type)
++
++        expected = Nx.dot(input, [2], qw, [1])
++        result = Nx.Defn.jit(&Nx.dot(&1, [2], &2, [1]), compiler: EMLX).(input, qw)
++
++        assert Nx.type(result) == {:f, 16}
++        assert_all_close(result, expected)
++      end
++    end
+   end
+ 
+   describe "LoRA with quantized base weight" do
+@@ -159,4 +177,94 @@ defmodule EMLX.BackendQuantizationTest do
        assert Nx.shape(result) == {4, 5}
      end
    end
@@ -125,6 +174,16 @@ index ec7b796..55bd720 100644
 +      assert restored.data.quantization_config.transpose == nil
 +    end
 +
++    test "transposes a tensor whose transpose flag is false as one without the flag",
++         %{input: input, qw: qw} do
++      config = %{qw.data.quantization_config | transpose: false}
++      qw_false = %{qw | data: %{qw.data | quantization_config: config}}
++      transposed = Nx.transpose(qw_false)
++
++      assert transposed.data.quantization_config.transpose == true
++      assert_all_close(Nx.dot(input, [2], transposed, [0]), Nx.dot(input, [2], qw, [1]))
++    end
++
 +    test "contracting the first axis of the transposed tensor matches the original",
 +         %{input: input, qw: qw} do
 +      expected = Nx.dot(input, [2], qw, [1])
@@ -149,16 +208,21 @@ index ec7b796..55bd720 100644
 +      assert_all_close(result, expected)
 +    end
 +
-+    test "a compiled dot casts to the activation type when the scales are wider",
-+         %{input: input, qw: qw} do
-+      assert Nx.type(qw.data.quantization_config.scales) == {:f, 32}
-+      input = Nx.as_type(input, :f16)
++    test "raises on contracting the last axis of a square transposed tensor" do
++      input = Nx.iota({2, 64}, type: :f32) |> Nx.divide(100)
++      input = Nx.backend_transfer(input, {EMLX.Backend, device: :gpu})
 +
-+      expected = Nx.dot(input, [2], qw, [1])
-+      result = Nx.Defn.jit(&Nx.dot(&1, [2], &2, [1]), compiler: EMLX).(input, qw)
++      weight = Nx.iota({64, 64}, type: :f32) |> Nx.sin()
++      weight = Nx.backend_transfer(weight, {EMLX.Backend, device: :gpu})
++      transposed = weight |> EMLX.quantize([]) |> Nx.transpose()
 +
-+      assert Nx.type(result) == {:f, 16}
-+      assert_all_close(result, expected)
++      assert_raise ArgumentError, ~r/can be contracted only on its first axis/, fn ->
++        Nx.dot(input, [1], transposed, [1])
++      end
++
++      assert_raise ArgumentError, ~r/can be contracted only on its first axis/, fn ->
++        Nx.Defn.jit(&Nx.dot(&1, [1], &2, [1]), compiler: EMLX).(input, transposed)
++      end
 +    end
 +
 +    test "raises on axes other than [1, 0]" do

@@ -2,7 +2,7 @@
 
 This repository backs two changes that let Bumblebee run checkpoints quantized with MLX, such as the ones under [mlx-community](https://huggingface.co/mlx-community), on EMLX without dequantizing them:
 
-- EMLX: transposing a quantized tensor, and the result type of quantized products, in two commits on elixir-nx/emlx `d5c78ae` ([`emlx.patch`](emlx/emlx.patch)), which also apply cleanly to its current main.
+- EMLX: transposing a quantized tensor, the result type of quantized products, and an error for contracting a transposed quantized tensor on its last axis, in five commits on elixir-nx/emlx main at `808d3ce`, branch `checkpoint-quantized` at `61a1f79` ([`emlx.patch`](emlx/emlx.patch)).
 - Bumblebee: loading the quantized weights, on branch [`mlx-quantized`](https://github.com/rodrigues/bumblebee/tree/mlx-quantized) of rodrigues/bumblebee ([`bumblebee.patch`](bumblebee/bumblebee.patch)).
 
 The Qwen3.5 checkpoints also need the Qwen3.5 model, from the [`qwen3-5`](https://github.com/rodrigues/bumblebee-evidence/tree/qwen3-5) branch of this repository; branch [`qwen3-8-mlx`](https://github.com/rodrigues/bumblebee/tree/qwen3-8-mlx) has both.
@@ -66,7 +66,7 @@ Bumblebee uses about 2 GB more than mlx-lm because it dequantizes the embedding 
 ## EMLX
 
 The EMLX quantization tests pass ([`quantization-tests.txt`](emlx/outputs/quantization-tests.txt)), and so do the Bumblebee tests, run against the local checkpoints on branch `qwen3-8-mlx`, which also has Qwen3.5 ([`tests.sh`](bumblebee/tests.sh), [`tests.txt`](bumblebee/outputs/tests.txt)).
-In the full suite, ten tests in attention with sinks, async evaluation, linear algebra and the fused attention cache fail on the base commit as well as on the branch ([`failing-tests-base-and-branch.txt`](emlx/outputs/failing-tests-base-and-branch.txt)); one test that takes over 50 minutes to compile was left out.
+The full EMLX suite at `61a1f79`, on the GPU with MLX_ENABLE_TF32=0, passes: 2,756 tests and doctests, with the 7 tagged as excluded by default left out ([`suite-61a1f79.txt`](emlx/outputs/suite-61a1f79.txt)).
 
 ## Not checked
 

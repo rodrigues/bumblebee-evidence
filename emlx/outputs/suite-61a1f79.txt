@@ -1,0 +1,3 @@
+# EMLX 61a1f79, full suite on the GPU: EMLX_TEST_DEFAULT_GPU=true MLX_ENABLE_TF32=0 mix test, 2026-11-26
+Finished in 12.8 seconds (1.6s async, 11.2s sync)
+Result: 2756 passed (824 doctests, 1932 tests), 7 excluded
